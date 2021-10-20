@@ -1,0 +1,79 @@
+{
+  "documentationUrl": "https://docsurl.com",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Neo4j Entity Spec",
+    "type": "object",
+    "required": ["host", "database", "username", "password"],
+    "additionalProperties": false,
+    "properties": {
+      "scheme": {
+        "description": "Uri connection scheme.",
+        "type": "string",
+        "enum": ["bolt", "http"],
+        "order": 0
+      },
+      "host": {
+        "description": "Hostname of the database.",
+        "type": "string",
+        "order": 1
+      },
+      "port": {
+        "description": "Port of the database.",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65536,
+        "default": 7687,
+        "examples": ["7687"],
+        "order": 2
+      },
+      "database": {
+        "description": "Name of the database.",
+        "type": "string",
+        "examples": ["neo4j"],
+        "order": 3
+      },
+      "username": {
+        "description": "Username to use to access the database.",
+        "type": "string",
+        "order": 4
+      },
+      "password": {
+        "description": "Password associated with the username.",
+        "type": "string",
+        "airbyte_secret": true,
+        "order": 5
+      },
+      "replication_method": {
+        "type": "string",
+        "title": "Replication Method",
+        "description": "Replication method to use for extracting data from the database. STANDARD replication requires no setup on the DB side but will not be able to represent deletions incrementally. CDC uses the Binlog to detect inserts, updates, and deletes. This needs to be configured on the source database itself.",
+        "order": 6,
+        "default": "STANDARD",
+        "enum": ["STANDARD"]
+      },
+      "state_checkpoint_interval": {
+        "type": "integer",
+        "title": "Incremental sync option: state checkpoint interval.",
+        "description": "Number of records to be read before checkpointing state",
+        "order": 7,
+        "default": 1000,
+        "examples": [100, 1000, 2000, 5000, 10000]
+      },
+      "max_records_per_incremental_sync": {
+        "type": "integer",
+        "title": "Incremental sync option: maximum number of records per sync.",
+        "description": "Maximum number of records that will be read within a sync launch. Useful if you have a high volume of data but requires to run/schedule multiple syncs to synchronize all data",
+        "order": 8,
+        "examples": [1000000]
+      },
+      "slices_count_per_incremental_sync": {
+        "type": "integer",
+        "title": "Incremental sync option: number of slices",
+        "description": "Number of slices to generate per sync. Mandatory to activate slices",
+        "order": 9,
+        "examples": [10]
+      }
+    }
+  }
+}
