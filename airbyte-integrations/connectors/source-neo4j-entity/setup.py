@@ -33,6 +33,7 @@ MAIN_REQUIREMENTS = [
 TEST_REQUIREMENTS = [
     "pytest~=6.1",
     "pytest-mock~=3.6.1",
+    "pytest-cov",
     "source-acceptance-test",
 ]
 
