@@ -2,14 +2,11 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "id": {
+    "_identity": {
       "type": ["integer"]
     },
-    "labels": {
-      "type": ["null", "array"]
-    },
-    "properties": {
-      "type": ["null", "object"]
+    "_labels": {
+      "type": ["array"]
     }
   }
 }
