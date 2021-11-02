@@ -21,32 +21,3 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-
-
-from setuptools import find_packages, setup
-
-MAIN_REQUIREMENTS = [
-    "airbyte-cdk",
-    "neo4j~=4.3",
-]
-
-TEST_REQUIREMENTS = [
-    "pytest~=6.1",
-    "pytest-mock~=3.6.1",
-    "pytest-cov",
-    "testcontainers[neo4j]",
-    "source-acceptance-test",
-]
-
-setup(
-    name="source_neo4j_entity",
-    description="Source implementation for Neo4j Entity.",
-    author="Airbyte",
-    author_email="marc@marketparts.com",
-    packages=find_packages(),
-    install_requires=MAIN_REQUIREMENTS,
-    package_data={"": ["*.json", "schemas/*.json", "schemas/shared/*.json"]},
-    extras_require={
-        "tests": TEST_REQUIREMENTS,
-    },
-)
