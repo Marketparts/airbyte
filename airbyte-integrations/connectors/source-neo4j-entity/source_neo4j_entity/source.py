@@ -28,6 +28,16 @@ from typing import Any, List, Mapping, Tuple
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
 
+# TODO: remove when overriding _read_incremental() is no longer required
+from typing import Iterator, MutableMapping
+from airbyte_cdk.sources.utils.schema_helpers import InternalConfig
+from airbyte_cdk.logger import AirbyteLogger
+from airbyte_cdk.models import (
+    AirbyteMessage,
+    ConfiguredAirbyteStream,
+    SyncMode,
+)
+################
 
 
 from source_neo4j_entity.streams import Neo4jClient
@@ -53,9 +63,9 @@ class SourceNeo4jEntity(AbstractSource):
             check_result = (True, None)
 
         except Exception as e:
-            logger.error("Unable to connect to neo4j on bolt://{}:{}, reason: {}".format(config['host'], config['port'], str(e)))
-            check_result[1] = e
-
+            error = "Unable to connect to neo4j on {}, reason: {}".format(client.uri, str(e))
+            logger.error(error)
+            check_result = (False, error)
 
         return check_result
 
@@ -66,8 +76,8 @@ class SourceNeo4jEntity(AbstractSource):
 
         :param config: A Mapping of the user input configuration as defined in the connector spec.
         """
-        client = Neo4jClient(config=config)
-
+        client = Neo4jClient(config=config, preload_schemas=True)
+        
         streams = []
         for label in client.node_labels:
             streams.append(NodeStream(label=label, client=client, config=config))
@@ -78,3 +88,49 @@ class SourceNeo4jEntity(AbstractSource):
 
         return streams
 
+
+    def _read_incremental(
+        self,
+        logger: AirbyteLogger,
+        stream_instance: Stream,
+        configured_stream: ConfiguredAirbyteStream,
+        connector_state: MutableMapping[str, Any],
+        internal_config: InternalConfig,
+    ) -> Iterator[AirbyteMessage]:
+        """
+        Overrides AbstractSource method due to issue https://github.com/airbytehq/airbyte/issues/7390 
+        """
+        stream_name = configured_stream.stream.name
+        stream_state = connector_state.get(stream_name, {})
+        if stream_state:
+            logger.info(f"Setting state of {stream_name} stream to {stream_state}")
+
+        checkpoint_interval = stream_instance.state_checkpoint_interval
+        slices = stream_instance.stream_slices(
+            cursor_field=configured_stream.cursor_field, sync_mode=SyncMode.incremental, stream_state=stream_state
+        )
+        total_records_counter = 0
+        for slice in slices:
+            records = stream_instance.read_records(
+                sync_mode=SyncMode.incremental,
+                stream_slice=slice,
+                stream_state=stream_state,
+                cursor_field=configured_stream.cursor_field or None,
+            )
+            for record_counter, record_data in enumerate(records, start=1):
+                yield self._as_airbyte_record(stream_name, record_data)
+                stream_state = stream_instance.get_updated_state(stream_state, record_data, configured_stream.cursor_field)
+                if checkpoint_interval and record_counter % checkpoint_interval == 0:
+                    yield self._checkpoint_state(stream_name, stream_state, connector_state, logger)
+
+                total_records_counter += 1
+                # This functionality should ideally live outside of this method
+                # but since state is managed inside this method, we keep track
+                # of it here.
+                if self._limit_reached(internal_config, total_records_counter):
+                    # Break from slice loop to save state and exit from _read_incremental function.
+                    break
+
+            yield self._checkpoint_state(stream_name, stream_state, connector_state, logger)
+            if self._limit_reached(internal_config, total_records_counter):
+                return

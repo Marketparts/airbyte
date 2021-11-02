@@ -31,9 +31,22 @@ class Neo4jClient:
     """
     Wrapper to the neo4j python driver
     """
+    MAP_NEO4J_TYPES_TO_JSON_SCHEMA_TYPES = {
+        "Boolean": "boolean",
+        "Double": "number",
+        "Long": "number",
+        "String": "string",
+        "StringArray": "array",
+        "DoubleArray": "array",
+        "LongArray": "array"
+    }
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
+    def __init__(self, config: Mapping[str, Any], preload_schemas: bool = False) -> None:
         self._config = config
+
+        if preload_schemas:
+            self.node_json_schemas
+            self.relationship_json_schemas
 
     @property
     def uri(self) -> str:
@@ -77,6 +90,7 @@ class Neo4jClient:
 
         return self._property_keys
 
+
     @property
     def node_labels(self) -> List[str]:
         """
@@ -91,6 +105,7 @@ class Neo4jClient:
             self._node_labels = sorted([x for x in results], key=str.casefold)
 
         return self._node_labels
+
 
     @property
     def relationship_types(self) -> List[str]:
@@ -108,6 +123,165 @@ class Neo4jClient:
         return self._relationship_types
 
 
+    @property
+    def node_json_schemas(self) -> Mapping[str, Any]:
+        """
+        Get schema of each existing nodes (i.e. properties and types)
+        :return: dict schema
+        """
+        return self._get_node_json_schemas_v2()
+
+
+    @property
+    def relationship_json_schemas(self) -> Mapping[str, Any]:
+        """
+        Get schema of each existing relationships (i.e. properties and types)
+        :return: dict schema
+        """
+        return self._get_relationship_json_schemas_v2()
+
+
+    def _get_node_json_schemas_v2(self) -> Mapping[str, Any]:
+        """
+        Get schema of each existing nodes (i.e. properties and types)
+        :return: dict schema
+        """
+        if not hasattr(self, "_node_json_schemas"):
+            self._node_json_schemas = {}
+
+            if len(self.node_labels) > 0:
+                query = "CALL db.schema.nodeTypeProperties();"
+
+                results = self.fetch_results(cypher_query=query)
+
+                # we construct the json_schema from the resultset
+                
+                for label in self.node_labels:
+                    self._node_json_schemas[label] = {}
+
+                for record in results:
+                    if record["propertyName"] is not None:
+                        for label in record["nodeLabels"]:
+                            self._node_json_schemas[label][record["propertyName"]] = {
+                                "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
+                                "required": record["mandatory"]
+                                }
+
+        return self._node_json_schemas
+
+
+    def _get_relationship_json_schemas_v2(self) -> Mapping[str, Any]:
+        """
+        Get schema of each existing relationships (i.e. properties and types)
+        :return: dict schema
+        """
+        if not hasattr(self, "_relationship_json_schemas"):
+            self._relationship_json_schemas = {}
+
+            if len(self.relationship_types) > 0:
+                query = "CALL db.schema.relTypeProperties();"
+
+                results = self.fetch_results(cypher_query=query)
+
+                # we construct the json_schema from the resultset
+                for type in self.relationship_types:
+                    self._relationship_json_schemas[type] = {}
+
+                for record in results:
+                    if record["propertyName"] is not None:
+                        type = record["relType"].replace("`", "").replace(":", "")
+                        self._relationship_json_schemas[type][record["propertyName"]] = {
+                            "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
+                            "required": record["mandatory"]
+                            }
+
+        return self._relationship_json_schemas
+
+
+    def _get_node_json_schemas_v1(self) -> Mapping[str, Any]:
+        """
+        Get schema of each existing nodes (i.e. properties and types)
+        :return: dict schema
+        """
+        if not hasattr(self, "_node_json_schemas"):
+            # we limit the variable returned by the neo4j procedure apoc.meta.nodeTypeProperties()
+            return_variables = ["nodeType", "propertyName", "propertyTypes", "mandatory"]
+            
+            query_return_variables = ", ".join(return_variables)
+            query = """CALL apoc.meta.nodeTypeProperties({{includeLabels:[_], sample: 1000}})
+            YIELD {}
+            RETURN _ as label, {}
+            """.format(
+                query_return_variables,
+                query_return_variables
+                )
+
+            return_variables.insert(0, "label")
+
+            # To accelerate the process, we parallelize the query as it will scan a sample of each node
+            results = self.fetch_results_parallel(
+                cypher_query=query,
+                list_to_parallelize=self.node_labels,
+                return_variables=return_variables
+            )
+
+            # we construct the json_schema from the resultset
+            self._node_json_schemas = {}
+            for label in self.node_labels:
+                self._node_json_schemas[label] = {}
+
+            for record in results:
+                if record["propertyName"] is not None:
+                    self._node_json_schemas[record["label"]][record["propertyName"]] = {
+                        "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
+                        "required": record["mandatory"]
+                        }
+
+        return self._node_json_schemas
+
+
+    def _get_relationship_json_schemas_v1(self) -> Mapping[str, Any]:
+        """
+        Get schema of each existing relationships (i.e. properties and types)
+        :return: dict schema
+        """
+        if not hasattr(self, "_relationship_json_schemas"):
+            # we limit the variable returned by the neo4j procedure apoc.meta.relTypeProperties()
+            return_variables = ["relType", "propertyName", "propertyTypes", "mandatory"]
+            
+            # To accelerate the process, we parallelize the query as it will scan a sample of each node
+            query_return_variables = ", ".join(return_variables)
+            query = """CALL apoc.meta.relTypeProperties({{includeRels:[_], maxRels: 100}})
+            YIELD {}
+            RETURN _ as type, {}
+            """.format(
+                query_return_variables,
+                query_return_variables
+                )
+
+            return_variables.insert(0, "type")
+
+            results = self.fetch_results_parallel(
+                cypher_query=query,
+                list_to_parallelize=self.relationship_types,
+                return_variables=return_variables
+                )
+
+            # we construct the json_schema from the resultset
+            self._relationship_json_schemas = {}
+            for type in self.relationship_types:
+                self._relationship_json_schemas[type] = {}
+
+            for record in results:
+                if record["propertyName"] is not None:
+                    self._relationship_json_schemas[record["type"]][record["propertyName"]] = {
+                        "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
+                        "required": record["mandatory"]
+                        }
+
+        return self._relationship_json_schemas
+
+
     def fetch_results(self, cypher_query: Mapping[str, Any], transform_func = None) -> Any:
         """
         Fetch all results corresponding to the cypher query
@@ -117,6 +291,9 @@ class Neo4jClient:
             cypher_query = {"query": cypher_query}
         elif cypher_query.get("query") is None:
             raise ValueError("Key 'query' not found in cypher query")
+
+        # remove all trailing characters
+        cypher_query["query"] = cypher_query["query"].rstrip()
 
         if transform_func is not None:
             if not callable(transform_func):
@@ -134,12 +311,37 @@ class Neo4jClient:
                 for ix, record in enumerate(results):
                     yield transform_func(record)
 
+            self.driver.close()
+
         except Exception as e:
             # ensure connection is closed in case of exception
             self.driver.close()
 
             raise e
             
+
+    def fetch_results_parallel(self, cypher_query: Mapping[str, Any], list_to_parallelize: List[Any], return_variables: List[str], partitions: int = None, transform_func = None) -> Any:
+        """
+        Fetch in parallel all results corresponding to the cypher query
+        :return: list of records
+        """
+        partitions = partitions or len(list_to_parallelize)
+        return_variables = ", ".join(["value.{} as {}".format(var, var) for var in return_variables])
+        query = """
+            WITH $list as list
+            CALL apoc.cypher.mapParallel2("{}",
+            {{}}, list, {}, 120) YIELD value
+            RETURN {}
+            """.format(
+                    cypher_query,
+                    partitions,
+                    return_variables
+                )
+        params = {"list": list_to_parallelize}
+        query = {"query": query, "params": params}
+
+        return self.fetch_results(cypher_query=query, transform_func=transform_func)
+
 
     def verify_connectivity(self) -> Any:
         """
@@ -157,3 +359,26 @@ class Neo4jClient:
         :return: list of records
         """
         return list(tx.run(query, **kparams))
+
+
+    def _map_types_from_neo4j_to_json_schema(self, types: List[str]) -> List[str]:
+        """
+        Get json_schema types corresponding to neo4j's ones 
+        :return: list of types
+        """
+        if isinstance(types, str):
+            types = [types]
+
+        # Convert neo4j's types to json-schema's ones
+        # See https://neo4j.com/labs/apoc/4.3/overview/apoc.meta/apoc.meta.type/
+        # See http://json-schema.org/understanding-json-schema/reference/type.html
+        
+        json_schema_types = []
+
+        for type in types:
+            if type not in self.MAP_NEO4J_TYPES_TO_JSON_SCHEMA_TYPES:
+                raise ValueError("Unable to map type to json_schema type : unknown type '{}'".format(type))
+            
+            json_schema_types.append(self.MAP_NEO4J_TYPES_TO_JSON_SCHEMA_TYPES[type])
+
+        return json_schema_types

@@ -67,24 +67,31 @@ class Neo4jEntityStream(Stream, ABC):
         This method looks for a JSONSchema file with the same name as this stream's "_entity_type" property.
         Ovverides Stream.get_json_schema()
         """
-        # TODO investigate if we need and how to construct the full schema
-        # option 1: fast but approximative: no entity properties, just a unique properties object
-        # option 2: fast but approximative: all properties in the database for each entity in the database
-        # option 3: slow (db scan) but more accurate: real properties for each entity in the database
+        # TODO investigate how to construct the full schema
+        # option 1: fast but approximative: all properties in the database for each entity in the database
+        # option 2: slow (db scan) but more accurate: real properties for each entity in the database
         
-        # option 1
         base_schema = ResourceSchemaLoader(package_name_from_class(self.__class__)).get_schema(self.entity_type)
-
-        # option2: we add the list of all properties existing in the database for each entity
+        
+        # option2: we add the list of all properties existing in the database whatever the entity it belongs to
         # property_keys = self._client.property_keys
-        # base_schema["properties"]["properties"]["properties"] = {}
         # for prop in property_keys:
         #     # as the type of neo4j properties are not constraint, it can be of every type
-        #     base_schema["properties"]["properties"]["properties"][prop] = [
-        #         "null", "boolean", "string", "number", "array", "object"
-        #     ]
+        #     base_schema["properties"][prop] = {"type": [
+        #         "object", "boolean", "string", "number", "array", "null"
+        #     ]}
+
+        # option3: we add the list of real properties for each entity in the database
+        if self.entity_type == "node":
+            base_schema["properties"] = {**base_schema["properties"], **self._client.node_json_schemas[self.name]}
+        elif self.entity_type == "relationship":
+            base_schema["properties"] = {**base_schema["properties"], **self._client.relationship_json_schemas[self.name]}
+        else:
+            raise ValueError("Entity type {} not supported".format(self.entity_type))
+
 
         return base_schema
+
 
     @abstractproperty
     def entity_type(self) -> str:
@@ -154,26 +161,30 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         """
         Set stream config parameters
         """
+
+        # set (approximative) maximum number of records per incremental sync
         max_records_per_incremental_sync = config.get("max_records_per_incremental_sync")
         if max_records_per_incremental_sync is not None:
             if not isinstance(max_records_per_incremental_sync, int):
                 raise ValueError("max_records_per_incremental_sync must be an integer")
 
-        self._max_records_per_incremental_sync = config.get("max_records_per_incremental_sync")
+        self._max_records_per_incremental_sync = max_records_per_incremental_sync
 
+        # set numbers of records between state checkpointing
         state_checkpoint_interval = config.get("state_checkpoint_interval") or 1000
         if state_checkpoint_interval is not None:
             if not isinstance(state_checkpoint_interval, int):
                 raise ValueError("state_checkpoint_interval must be an integer")
 
-        self._state_checkpoint_interval = config.get("state_checkpoint_interval")
+        self._state_checkpoint_interval = state_checkpoint_interval
 
+        # set number of slices per ncremental sync
         slices_count_per_incremental_sync = config.get("slices_count_per_incremental_sync")
         if slices_count_per_incremental_sync is not None:
             if not isinstance(slices_count_per_incremental_sync, int):
                 raise ValueError("slices_count_per_incremental_sync must be an integer")
 
-        self._slices_count_per_incremental_sync = config.get("slices_count_per_incremental_sync")
+        self._slices_count_per_incremental_sync = slices_count_per_incremental_sync
 
 
     @property
@@ -196,22 +207,30 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         """
         Return False if the cursor can be configured by the user.
         """
+        return False
+
+
+    @property
+    def supports_incremental(self) -> bool:
+        """
+        Overrides Stream::supports_incremental to make it works with cursor field configured by user
+        See https://github.com/airbytehq/airbyte/issues/7390
+        :return: True if this stream supports incrementally reading data
+        """
         return True
 
 
-    def get_updated_state(self, current_stream_state: MutableMapping[str, Any], latest_record: Mapping[str, Any]) -> Mapping[str, Any]:
+    def get_updated_state(self, current_stream_state: MutableMapping[str, Any], latest_record: Mapping[str, Any], cursor_field: List[str]) -> Mapping[str, Any]:
         """
         Override to determine the latest state after reading the latest record. This typically compared the cursor_field from the latest record and
         the current state and picks the 'most' recent cursor. This is how a stream's state is determined. Required for incremental.
         """
-        cursor_field = self.cursor_field[0]
+        if isinstance(cursor_field, list):
+            cursor_field = cursor_field[0]
 
-        if cursor_field == "identity":
-            latest_state = latest_record[cursor_field]
-        else:
-            latest_state = latest_record["properties"][cursor_field]
+        latest_state = latest_record[cursor_field]
         
-        if current_stream_state.get(cursor_field):
+        if current_stream_state and current_stream_state.get(cursor_field):
             return {cursor_field: max(latest_state, current_stream_state[cursor_field])}
         
         return {cursor_field: latest_state}
@@ -245,7 +264,6 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         records_count = data_info["records_count"]
         cursor_min = data_info["cursor_min"]
         cursor_max = data_info["cursor_max"]
-        cursor_type = data_info["cursor_type"]
 
         # if no data has to by synced, we return [None] i.e. no slice
         if records_count == 0:
@@ -253,11 +271,15 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
 
         # Slice are supported for numbers only
         # because we do not know how to generate slices for other types, we return [None] i.e. no slice feature
-        if cursor_type not in ["INTEGER", "FLOAT"]:
+        # get type of cursor_field
+        cursor_types = self.get_json_schema()["properties"][cursor_field]["type"]
+
+        if "number" not in cursor_types and "integer" not in cursor_types:
             return [None]
 
         # limit the numbers of records for this sync process if _max_records_per_incremental_sync has been set
-        if self._max_records_per_incremental_sync is not None:
+        # and _max_records_per_incremental_sync < records_count
+        if self._max_records_per_incremental_sync is not None and self._max_records_per_incremental_sync < records_count:
             percentile = round(self._max_records_per_incremental_sync / records_count, 3)
 
             cursor_values =  self._get_cursor_value_for_percentiles(
@@ -309,7 +331,10 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         :return: cypher query for fetching entity
         """
         cursor_field = cursor_field[0]
-        latest_state = stream_state.get("latest_state")
+        
+        latest_state = None
+        if stream_state and stream_state.get("latest_state"):
+            latest_state = stream_state.get("latest_state")
     
         query_where = ""
         query_order = ""
@@ -366,7 +391,7 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         """
         :return: cursor identifier unsed in cypher queries
         """
-        if cursor_field == "identity":
+        if cursor_field == "_identity":
             query_cursor = "ID({})".format(self.name)
         else:
             query_cursor = "{}.{}".format(self.name, cursor_field)
@@ -406,22 +431,22 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         info["cursor_max"] = res[2]
 
         # get type of cursor_field
-        query = """
-            MATCH ({}:{})
-            WHERE {} = $value
-            RETURN
-                apoc.meta.type({}) AS type
-        """.format(
-                self.name, self.name,
-                query_cursor,
-                query_cursor
-            )
+        # query = """
+        #     MATCH ({}:{})
+        #     WHERE {} = $value
+        #     RETURN
+        #         apoc.meta.type({}) AS type
+        # """.format(
+        #         self.name, self.name,
+        #         query_cursor,
+        #         query_cursor
+        #     )
 
-        params = {"value": info["cursor_min"]}
-        query = {"query": query, "params": params}
-        res = next(self._client.fetch_results(query))
+        # params = {"value": info["cursor_min"]}
+        # query = {"query": query, "params": params}
+        # res = next(self._client.fetch_results(query))
 
-        info["cursor_type"] = res[0]
+        # info["cursor_type"] = res[0]
 
 
         return info
@@ -493,18 +518,6 @@ class NodeStream(IncrementalNeo4jEntityStream):
         return self._label
 
 
-    @property
-    def cursor_field(self) -> str:
-        """
-        TODO
-        Override to return the cursor field used by this stream e.g: an API entity might always use created_at as the cursor field. This is
-        usually id or date based. This field's presence tells the framework this in an incremental stream. Required for incremental.
-
-        :return str: The name of the cursor field.
-        """
-        return ["LastUpdate"]
-
-
     @staticmethod
     def _record_to_dict(record) -> Mapping[str, Any]:
         """
@@ -516,13 +529,20 @@ class NodeStream(IncrementalNeo4jEntityStream):
 
         return_var_name = record.keys()[0]
 
-        record = {
-                    "identity": record[return_var_name].id,
-                    "labels": list(record[return_var_name].labels),
-                    "properties": record.data()[return_var_name]
-                }
+        dict_record = record.data()[return_var_name]
+        
+        # add identity and labels not considered as properties
+        # we prepend the names with an underscore to avoid collision with the name of a property
+        if "_identity" in record.keys():
+            raise ValueError("Unable to add '_identity' field to properties: a property with the same name exists")
 
-        return record
+        if "_labels" in record.keys():
+            raise ValueError("Unable to add '_labels' field to properties: a property with the same name exists")
+
+        dict_record["_identity"] = record[return_var_name].id
+        dict_record["_labels"] = list(record[return_var_name].labels)
+
+        return dict_record
 
 
 class RelationshipStream(IncrementalNeo4jEntityStream):
@@ -530,17 +550,6 @@ class RelationshipStream(IncrementalNeo4jEntityStream):
     Stream corresponding to a relationship entity
     """
     primary_key = "identity"
-
-    @property
-    def cursor_field(self) -> str:
-        """
-        TODO
-        Override to return the cursor field used by this stream e.g: an API entity might always use created_at as the cursor field. This is
-        usually id or date based. This field's presence tells the framework this in an incremental stream. Required for incremental.
-
-        :return str: The name of the cursor field.
-        """
-        return ["identity"]
 
 
     def __init__(self, type:str, client: Neo4jClient, config: Mapping[str, Any] = None) -> None:
@@ -575,13 +584,26 @@ class RelationshipStream(IncrementalNeo4jEntityStream):
             
         return_var_name = record.keys()[0]
 
-        record = {
-                    "identity": record[return_var_name].id,
-                    "start": record[return_var_name].start_node.id,
-                    "end": record[return_var_name].end_node.id,
-                    "type": record[return_var_name].type,
-                    "properties": dict(record[return_var_name].items())
-                }
+        dict_record =  dict(record[return_var_name].items())
+        
+        # add identity, start, end and type not considered as properties
+        # we prepend the names with an underscore to avoid collision with the name of a property
+        if "_identity" in record.keys():
+            raise ValueError("Unable to add '_identity' field to properties: a property with the same name exists")
+
+        if "_start" in record.keys():
+            raise ValueError("Unable to add '_start' field to properties: a property with the same name exists")
+
+        if "_end" in record.keys():
+            raise ValueError("Unable to add '_end' field to properties: a property with the same name exists")
+
+        if "_type" in record.keys():
+            raise ValueError("Unable to add '_type' field to properties: a property with the same name exists")
+
+        dict_record["_identity"] = record[return_var_name].id
+        dict_record["_start"] = record[return_var_name].start_node.id
+        dict_record["_end"] = record[return_var_name].end_node.id
+        dict_record["_type"] = record[return_var_name].type
 
         return record
 
