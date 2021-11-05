@@ -45,6 +45,18 @@ from source_neo4j_entity.streams import NodeStream, RelationshipStream
 
 
 class SourceNeo4jEntity(AbstractSource):
+    """
+    Source dedicated to synchronise entities (i.e. nodes and relationships) of a Neo4j database
+    """
+    @property
+    def logger(self) -> AirbyteLogger:
+        """
+        Get logger
+        :return: AirbyteLogger
+        """
+        return AirbyteLogger()
+
+
     def check_connection(self, logger, config) -> Tuple[bool, any]:
         """
         Check if connection to Neo4j database is available with the configuration provided

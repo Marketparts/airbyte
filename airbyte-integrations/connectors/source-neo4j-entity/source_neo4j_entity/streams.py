@@ -26,6 +26,7 @@ import inspect, math
 from abc import ABC, abstractmethod, abstractproperty
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Union
 
+from airbyte_cdk import AirbyteLogger
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import Stream
 from airbyte_cdk.sources.utils.schema_helpers import ResourceSchemaLoader
@@ -53,6 +54,16 @@ class Neo4jEntityStream(Stream, ABC):
         config = config or {}
 
         self._set_config(config)
+
+    @property
+    def logger(self) -> AirbyteLogger:
+        """
+        Get logger
+        Overrides Stream property as it returns a standard python logger instead of an AirbyteLogger
+        :return: AirbyteLogger
+        """
+        return AirbyteLogger()
+
 
     @abstractmethod
     def _set_config(self, config: Mapping[str, Any]) -> None:

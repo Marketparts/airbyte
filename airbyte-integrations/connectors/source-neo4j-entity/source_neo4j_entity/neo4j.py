@@ -21,10 +21,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-
+from airbyte_cdk import AirbyteLogger
 from typing import Any, List, Mapping
 
 from neo4j import GraphDatabase
+
 
 
 class Neo4jClient:
@@ -47,6 +48,16 @@ class Neo4jClient:
         if preload_schemas:
             self.node_json_schemas
             self.relationship_json_schemas
+
+
+    @property
+    def logger(self) -> AirbyteLogger:
+        """
+        Get logger
+        :return: AirbyteLogger
+        """
+        return AirbyteLogger()
+
 
     @property
     def uri(self) -> str:
@@ -288,35 +299,47 @@ class Neo4jClient:
         :return: list of records
         """
         if isinstance(cypher_query, str):
-            cypher_query = {"query": cypher_query}
-        elif cypher_query.get("query") is None:
-            raise ValueError("Key 'query' not found in cypher query")
+            query = cypher_query
+            params = None
+        elif isinstance(cypher_query, Mapping):
+            query = cypher_query.get("query") or ""
+            params = cypher_query.get("params")
+        else:
+            raise TypeError("cypher query must be a string or dict")
+
 
         # remove all trailing characters
-        cypher_query["query"] = cypher_query["query"].rstrip()
+        query = self._clean_cypher_query(query)
+
+        if query == "":
+            raise ValueError("cypher query is empty")
+
 
         if transform_func is not None:
             if not callable(transform_func):
                 raise TypeError("transform_func is not callable")
         else:
             transform_func = lambda x: x
-
+        
         try:
             with self.driver.session() as session:
-                if cypher_query.get("params") is not None:
-                    results = session.read_transaction(self._do_cypher_tx, cypher_query.get("query"), **cypher_query.get("params"))
+                if params is None:
+                    self.logger.debug("Executing cypher query '{}'".format(query))
+                    results = session.read_transaction(self._do_cypher_tx, query)
                 else:
-                    results = session.read_transaction(self._do_cypher_tx, cypher_query.get("query"))
-                
-                for ix, record in enumerate(results):
-                    yield transform_func(record)
-
+                    self.logger.debug("Executing cypher query '{}' with params {}".format(query, str(params)))
+                    results = session.read_transaction(self._do_cypher_tx, query, **params)
+            
             self.driver.close()
+                
+            for ix, record in enumerate(results):
+                yield transform_func(record)
 
         except Exception as e:
             # ensure connection is closed in case of exception
             self.driver.close()
-
+            
+            self.logger.exception("Failed executing cypher query '{}' with params {}".format(query, str(params)))
             raise e
             
 
@@ -382,3 +405,14 @@ class Neo4jClient:
             json_schema_types.append(self.MAP_NEO4J_TYPES_TO_JSON_SCHEMA_TYPES[type])
 
         return json_schema_types
+
+    @staticmethod
+    def _clean_cypher_query(query: str):
+        """
+        Remove all unwanted characters (extra spaces and line feed)
+        """
+        query = query.strip() # remove leading and trailing spaces
+        query = query.replace("\n", " ") # remove line feed
+        query = " ".join(query.split()) # remove extra inner spaces
+
+        return query
