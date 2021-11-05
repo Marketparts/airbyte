@@ -82,15 +82,16 @@ class Neo4jEntityStream(Stream, ABC):
         #     ]}
 
         # option3: we add the list of real properties for each entity in the database
-        if self.entity_type == "node":
-            base_schema["properties"] = {**base_schema["properties"], **self._client.node_json_schemas[self.name]}
-        elif self.entity_type == "relationship":
-            base_schema["properties"] = {**base_schema["properties"], **self._client.relationship_json_schemas[self.name]}
-        else:
-            raise ValueError("Entity type {} not supported".format(self.entity_type))
-
-
+        base_schema["properties"] = {**base_schema["properties"], **self._get_specific_json_schema()}
+        
         return base_schema
+
+
+    @abstractmethod
+    def _get_specific_json_schema(self) -> Mapping[str, Any]:
+        """
+        Add stream specific schema to the base schema
+        """
 
 
     @abstractproperty
@@ -98,6 +99,7 @@ class Neo4jEntityStream(Stream, ABC):
         """
         :return: Neo4j entity type (node, relationship)
         """
+
 
     @property
     def primary_key(self) -> Optional[Union[str, List[str], List[List[str]]]]:
@@ -120,6 +122,15 @@ class Neo4jEntityStream(Stream, ABC):
         Get cypher query and optional parameters for fetching entity
         :return: string cypher query or dict with "query" and "params" keys
         """
+
+
+    @abstractmethod
+    def _get_cypher_match_query(self) -> str:
+        """
+        Get cypher MATCH query part
+        :return: string cypher query
+        """
+
 
     @staticmethod
     @abstractmethod
@@ -149,9 +160,6 @@ class Neo4jEntityStream(Stream, ABC):
         return self._client.fetch_results(query, self._record_to_dict)
 
 
-
-
-# Basic incremental stream
 class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
     """
     Base class for incremental neo4j streams
@@ -222,8 +230,8 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
 
     def get_updated_state(self, current_stream_state: MutableMapping[str, Any], latest_record: Mapping[str, Any], cursor_field: List[str]) -> Mapping[str, Any]:
         """
-        Override to determine the latest state after reading the latest record. This typically compared the cursor_field from the latest record and
-        the current state and picks the 'most' recent cursor. This is how a stream's state is determined. Required for incremental.
+        Get the cursor field value of the latest record synchronized
+        :return: dict {cursor_field: value}
         """
         if isinstance(cursor_field, list):
             cursor_field = cursor_field[0]
@@ -242,24 +250,40 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         """
         Generate the slices for this stream. See the stream slicing section of the docs for more information.
 
+        :param sync_mode:
+        :param cursor_field:
+        :param stream_state:
+        :return: list of dict {"from": value, "to": value}
+        """
+        # disable slices if user has configured a full refresh
+        # or did not configured slice count
+        if  sync_mode == SyncMode.full_refresh or self._slices_count_per_incremental_sync is None:
+            return [None]
+
+        return self._get_cursor_slices(sync_mode=sync_mode, cursor_field=cursor_field, stream_state=stream_state)
+
+
+    def _get_cursor_slices(
+        self, sync_mode: SyncMode, cursor_field: List[str] = None, stream_state: Mapping[str, Any] = None
+    ) -> Iterable[Optional[Mapping[str, Any]]]:
+        """
+        Generate cursor slices for incremental sync.
+        
+        This method will be used in:
+        - "slices" mode i.e. if _slices_count_per_incremental_sync is configured by user
+        - "standard" mode i.e. if _slices_count_per_incremental_sync is not configured by user, but _max_records_per_incremental_sync is
+
         :param stream_state:
         :return:
         """
-        # disable slices if user did not configured slice count
-        if  self._slices_count_per_incremental_sync is None:
-            return [None]
-
+        if isinstance(cursor_field, str):
+            cursor_field = [cursor_field]
+        
         cursor_field = cursor_field[0]
         stream_state = stream_state or {}
 
-        query_where = ""
-        params = None
-        query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
-        if stream_state.get(cursor_field) is not None:
-            query_where = "WHERE {} >= $from".format(query_cursor)
-            params = {"from": stream_state.get(cursor_field)}
 
-        data_info = self._describe_slices(query_cursor=query_cursor, query_where=query_where, params=params)
+        data_info = self._describe_slices(cursor_field=cursor_field, stream_state=stream_state)
 
         records_count = data_info["records_count"]
         cursor_min = data_info["cursor_min"]
@@ -284,7 +308,7 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
 
             cursor_values =  self._get_cursor_value_for_percentiles(
                 percentiles=[percentile],
-                query_cursor=query_cursor,
+                cursor_field=cursor_field,
                 cursor_min=cursor_min,
                 cursor_max=cursor_max
             )
@@ -292,26 +316,33 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
             cursor_max = cursor_values[percentile]
         
 
-        # calculate percentiles to balance slices
-        percentiles = [x/self._slices_count_per_incremental_sync for x in range(1, self._slices_count_per_incremental_sync, 1)]
+        slices_count = self._slices_count_per_incremental_sync or 1
 
-        cursor_values =  self._get_cursor_value_for_percentiles(
-            percentiles=percentiles,
-            query_cursor=query_cursor,
-            cursor_min=cursor_min,
-            cursor_max=cursor_max
-        )
+        if slices_count == 1:
+            slice_start_values = []
+            slice_end_values = []
+        else:
+            # calculate percentiles to balance slices
+            percentiles = [x/self._slices_count_per_incremental_sync for x in range(1, self._slices_count_per_incremental_sync, 1)]
+
+            cursor_values =  self._get_cursor_value_for_percentiles(
+                percentiles=percentiles,
+                cursor_field=cursor_field,
+                cursor_min=cursor_min,
+                cursor_max=cursor_max
+            )
+
+            slice_start_values = [cursor_values[percentile] for percentile in percentiles]
+            slice_end_values = [cursor_values[percentile] for percentile in percentiles]
 
         # if it is the initial sync (i.e. no cursor state), we decrease the cursor_min value by one, to be sure that
         # the cypher query include records with cursor_min  
         if stream_state.get(cursor_field) is None:
             cursor_min = cursor_min - 1
 
-        slice_start_values = [cursor_values[percentile] for percentile in percentiles]
         slice_start_values.insert(0, cursor_min)
-
-        slice_end_values = [cursor_values[percentile] for percentile in percentiles]
         slice_end_values.append(cursor_max)
+
 
         slices = []
         for item in zip(slice_start_values, slice_end_values):
@@ -330,59 +361,42 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         """
         :return: cypher query for fetching entity
         """
-        cursor_field = cursor_field[0]
-        
-        latest_state = None
-        if stream_state and stream_state.get("latest_state"):
-            latest_state = stream_state.get("latest_state")
-    
         query_where = ""
         query_order = ""
-        query_limit = ""
         params = None
 
-        # Add specific cursor_field WHERE and ORDER statements for incremental sync
-        # See https://docs.airbyte.io/connector-development/cdk-python/incremental-stream
-        query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
         if sync_mode == SyncMode.incremental:
-            if stream_slice is not None:
-                query_where = "WHERE {} > $from AND {} <= $to".format(query_cursor, query_cursor)
-                params = {"from": stream_slice["from"], "to": stream_slice["to"]}
-            elif latest_state is not None:
-                query_where = "WHERE {} > $from".format(query_cursor)
-                params = {"from": latest_state}
+            # Add specific cursor_field WHERE and ORDER statements for incremental sync
+            # See https://docs.airbyte.io/connector-development/cdk-python/incremental-stream
+            cursor_field = cursor_field[0]
+            query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
+
+            if stream_slice is None:
+                # if sync mode is incremental but no slices have been configured
+                # we get cursor_values from and to for 1 slice
+                stream_slice = self._get_cursor_slices(sync_mode=sync_mode, cursor_field=cursor_field, stream_state=stream_state)[0]
 
                 # interval based checkpointing needs records to be sorted by cursor_field ASC
                 query_order = "ORDER BY {} ASC".format(query_cursor)
 
-                # limit result set per sync if user has enabled it
-                if self._max_records_per_incremental_sync is not None:
-                    query_limit = "LIMIT {}".format(str(self._max_records_per_incremental_sync))
+            query_where = "WHERE {} > $from AND {} <= $to".format(query_cursor, query_cursor)
+            params = {"from": stream_slice["from"], "to": stream_slice["to"]}
 
  
-        # Generate specfic MATCH statements corresponding to node or relationship
-        if self.entity_type == "node":
-            query_match = "({}:{})".format(self.name, self.name)
-        elif self.entity_type == "relationship":
-            query_match = "()-[{}:{}]->()".format(self.name, self.name)
-        else:
-            raise ValueError("Type {} not supported".format(self.entity_type))
+        # Generate specific MATCH statements corresponding to node or relationship
+        query_match = self._get_cypher_match_query()
 
         query = """
                 MATCH {}
                 {}
                 RETURN {}
                 {}
-                {}
                 """.format(
                         query_match,
                         query_where,
                         self.name,
-                        query_order,
-                        query_limit
+                        query_order
                     )
-
-        self.logger.debug(query)
 
         return {"query": query, "params": params}
 
@@ -399,24 +413,39 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         return query_cursor
 
 
-    def _describe_slices(self, query_cursor: str, query_where: str = "", params:Mapping[str, Any] = None) -> Mapping[str, Any]:
+    def _describe_slices(self, cursor_field: List[str], stream_state: Mapping[str, Any] = None) -> Mapping[str, Any]:
         """
         Get information about the slices and the cursor field
         :return: dict of information
         """
-        info = {}
+        stream_state = stream_state or {}
+        if isinstance(cursor_field, str):
+            cursor_field = [cursor_field]
+        
+        cursor_field = cursor_field[0]
+
         
         # get statistical information
         # number of rows, min and max of cursor_field
+        info = {}
+
+        query_where = ""
+        params = None
+        query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
+        
+        if stream_state.get(cursor_field) is not None:
+            query_where = "WHERE {} >= $from".format(query_cursor)
+            params = {"from": stream_state.get(cursor_field)}
+
         query = """
-            MATCH ({}:{})
+            MATCH {}
             {}
             RETURN
                 count({}) AS count,
                 min({}) AS min,
                 max({}) AS max
         """.format(
-                self.name, self.name,
+                self._get_cypher_match_query(),
                 query_where,
                 query_cursor,
                 query_cursor,
@@ -430,32 +459,13 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         info["cursor_min"] = res[1]
         info["cursor_max"] = res[2]
 
-        # get type of cursor_field
-        # query = """
-        #     MATCH ({}:{})
-        #     WHERE {} = $value
-        #     RETURN
-        #         apoc.meta.type({}) AS type
-        # """.format(
-        #         self.name, self.name,
-        #         query_cursor,
-        #         query_cursor
-        #     )
-
-        # params = {"value": info["cursor_min"]}
-        # query = {"query": query, "params": params}
-        # res = next(self._client.fetch_results(query))
-
-        # info["cursor_type"] = res[0]
-
-
         return info
 
 
     def _get_cursor_value_for_percentiles(
         self,
         percentiles: List[int],
-        query_cursor: str,
+        cursor_field: List[str],
         cursor_min: Any,
         cursor_max: Any
     ) -> List[Mapping[int, Any]]:
@@ -463,18 +473,24 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         Get cursor values matching percentiles
         :return: list of 
         """
+        if isinstance(cursor_field, str):
+            cursor_field = [cursor_field]
+        
+        cursor_field = cursor_field[0]
+
+        query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
 
         # get cursor field value corresponding to the percentiles
         query = """
             WITH $percentiles as percentiles
             CALL apoc.cypher.mapParallel2("
-            MATCH ({}:{})
+            MATCH {}
             WHERE {} >= {} AND {} <= {}
             RETURN percentileDisc({}, _) as cursor_value, _ as percentile",
             {{}}, percentiles, size(percentiles), 60) YIELD value
             RETURN value.percentile as percentile, value.cursor_value as cursor_value
             """.format(
-                    self.name, self.name,
+                    self._get_cypher_match_query(),
                     query_cursor, cursor_min, query_cursor, cursor_max,
                     query_cursor
                 )
@@ -492,7 +508,7 @@ class NodeStream(IncrementalNeo4jEntityStream):
     """
     Stream corresponding to a node entity
     """
-    primary_key = "identity"
+    primary_key = "_identity"
 
     def __init__(self, label:str, client: Neo4jClient, config: Mapping[str, Any] = None) -> None:
         """
@@ -545,11 +561,29 @@ class NodeStream(IncrementalNeo4jEntityStream):
         return dict_record
 
 
+    def _get_specific_json_schema(self) -> Mapping[str, Any]:
+        """
+        Add stream specific schema to the base schema
+        """
+        return self._client.node_json_schemas[self.name]
+
+
+    def _get_cypher_match_query(self) -> str:
+        """
+        Get cypher MATCH query part
+        :return: string cypher query
+        """
+        query_match = "({}:{})".format(self.name, self.name)
+
+        return query_match
+
+
+
 class RelationshipStream(IncrementalNeo4jEntityStream):
     """
     Stream corresponding to a relationship entity
     """
-    primary_key = "identity"
+    primary_key = "_identity"
 
 
     def __init__(self, type:str, client: Neo4jClient, config: Mapping[str, Any] = None) -> None:
@@ -607,3 +641,19 @@ class RelationshipStream(IncrementalNeo4jEntityStream):
 
         return record
 
+
+    def _get_specific_json_schema(self) -> Mapping[str, Any]:
+        """
+        Add stream specific schema to the base schema
+        """
+        return self._client.relationship_json_schemas[self.name]
+
+
+    def _get_cypher_match_query(self) -> str:
+        """
+        Get cypher MATCH query part
+        :return: string cypher query
+        """
+        query_match = "()-[{}:{}]->()".format(self.name, self.name)
+
+        return query_match
