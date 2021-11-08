@@ -24,7 +24,7 @@
 from airbyte_cdk import AirbyteLogger
 from typing import Any, List, Mapping
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase,  DEFAULT_DATABASE
 
 
 
@@ -43,6 +43,20 @@ class Neo4jClient:
     }
 
     def __init__(self, config: Mapping[str, Any], preload_schemas: bool = False) -> None:
+        if not isinstance(config, Mapping):
+            raise ValueError("Config must be a dict")
+        
+        if config.get("scheme") is None:
+            raise ValueError("Config must have a 'scheme' key")
+        if config.get("host") is None:
+            raise ValueError("Config must have a 'host' key")
+        if config.get("port") is None:
+            raise ValueError("Config must have a 'port' key")
+        if config.get("username") is None:
+            raise ValueError("Config must have a 'username' key")
+        if config.get("password") is None:
+            raise ValueError("Config must have a 'password' key")
+
         self._config = config
 
         if preload_schemas:
@@ -69,6 +83,21 @@ class Neo4jClient:
             self._uri = "{}://{}:{}".format(self._config['scheme'], self._config['host'], self._config['port'])
 
         return self._uri
+
+
+    @property
+    def database(self) -> str:
+        """
+        Get the name of the database
+        :return: str
+        """
+        if not hasattr(self, "_database"):
+            self._database = DEFAULT_DATABASE
+
+            if isinstance(self._config.get("database"), str) and self._config.get("database").strip() != "":
+                self._database = self._config.get("database").strip()
+
+        return self._database
 
 
     @property
@@ -322,7 +351,7 @@ class Neo4jClient:
             transform_func = lambda x: x
         
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 if params is None:
                     self.logger.debug("Executing cypher query '{}'".format(query))
                     results = session.read_transaction(self._do_cypher_tx, query)
