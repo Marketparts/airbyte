@@ -57,7 +57,7 @@ class Neo4jTestInstance(object):
         
         self._config = {
             "scheme": "bolt",
-            "port": 7687,
+            "port": self.compose.get_service_port("neo4j", 7687),
             "host": self.compose.get_service_host("neo4j", 7687),
             "username": "neo4j",
             "password": "test"
@@ -68,7 +68,7 @@ class Neo4jTestInstance(object):
             auth=(self._config["username"], self._config["password"])
         )
 
-        self._wait_database_ready(max_time = 15)
+        self._wait_database_ready(max_time = 20)
         print("Neo4j container is ready to be used")
 
 
