@@ -1,7 +1,7 @@
 services:
   neo4j:
     image: neo4j:3.5.14-enterprise
-    container_name: neo4j-airbyte-sourcedev
+    container_name: airbyte-neo4j-entity-dev
     ports:
       - 7474:7474
       - 7687:7687
