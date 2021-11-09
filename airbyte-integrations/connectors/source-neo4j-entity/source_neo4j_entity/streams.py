@@ -22,7 +22,7 @@
 # SOFTWARE.
 #
 
-import inspect, math
+import inspect
 from abc import ABC, abstractmethod, abstractproperty
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Union
 
@@ -180,6 +180,12 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         """
         Set stream config parameters
         """
+        checkpointing_mode = config["incremental_sync_mode"].get("checkpointing_mode")
+        if checkpointing_mode is None:
+            raise ValueError("checkpointing_mode must be an defined")
+        
+        self._checkpointing_mode = checkpointing_mode
+
 
         # set (approximative) maximum number of records per incremental sync
         max_records_per_incremental_sync = config.get("max_records_per_incremental_sync")
@@ -190,18 +196,22 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         self._max_records_per_incremental_sync = max_records_per_incremental_sync
 
         # set numbers of records between state checkpointing
-        state_checkpoint_interval = config.get("state_checkpoint_interval") or 1000
-        if state_checkpoint_interval is not None:
-            if not isinstance(state_checkpoint_interval, int):
-                raise ValueError("state_checkpoint_interval must be an integer")
+        state_checkpoint_interval = 1000
+        if config.get("incremental_sync_mode") is not None:
+            state_checkpoint_interval = config["incremental_sync_mode"].get("state_checkpoint_interval") or 1000
+            if state_checkpoint_interval is not None:
+                if not isinstance(state_checkpoint_interval, int):
+                    raise ValueError("state_checkpoint_interval must be an integer")
 
         self._state_checkpoint_interval = state_checkpoint_interval
 
-        # set number of slices per ncremental sync
-        slices_count_per_incremental_sync = config.get("slices_count_per_incremental_sync")
-        if slices_count_per_incremental_sync is not None:
-            if not isinstance(slices_count_per_incremental_sync, int):
-                raise ValueError("slices_count_per_incremental_sync must be an integer")
+        # set number of slices per incremental sync
+        slices_count_per_incremental_sync = None
+        if config.get("incremental_sync_mode") is not None:
+            slices_count_per_incremental_sync = config["incremental_sync_mode"].get("slices_count_per_incremental_sync")
+            if slices_count_per_incremental_sync is not None:
+                if not isinstance(slices_count_per_incremental_sync, int):
+                    raise ValueError("slices_count_per_incremental_sync must be an integer")
 
         self._slices_count_per_incremental_sync = slices_count_per_incremental_sync
 
@@ -266,17 +276,51 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         :param stream_state:
         :return: list of dict {"from": value, "to": value}
         """
-        # disable slices if user has configured a full refresh
-        # or did not configured slice count
-        if  sync_mode == SyncMode.full_refresh or self._slices_count_per_incremental_sync is None:
+        # if user has configured a full refresh
+        # we return one empty slice
+        if  sync_mode == SyncMode.full_refresh:
             return [None]
 
-        return self._get_cursor_slices(sync_mode=sync_mode, cursor_field=cursor_field, stream_state=stream_state)
+        # we proceed further for incremental sync
+        if isinstance(cursor_field, str):
+            cursor_field = [cursor_field]
+    
+        if not isinstance(cursor_field, List):
+            raise ValueError("{} - {} - {} - {}".format(self.name, sync_mode, str(cursor_field), str(stream_state)))
+
+        cursor_field = cursor_field[0]
+        stream_state = stream_state or {}
+
+        # Incremental sync slices are supported for numbers only
+        # because we do not know how to generate slices for other types, we return [None] i.e. no slice
+        cursor_types = self.get_json_schema()["properties"][cursor_field]["type"]
+
+        if "number" not in cursor_types and "integer" not in cursor_types:
+            raise ValueError("Type '{}' not supported for cursor_field '{}'".format(type(cursor_field), cursor_field))
 
 
-    def _get_cursor_slices(
-        self, sync_mode: SyncMode, cursor_field: List[str] = None, stream_state: Mapping[str, Any] = None
-    ) -> Iterable[Optional[Mapping[str, Any]]]:
+        # get stats on data to see if there are any records to sync, and to prepare slices generation
+        data_info = self._describe_slices(cursor_field=cursor_field, stream_state=stream_state)
+
+        records_count = data_info["records_count"]
+        cursor_min = data_info["cursor_min"]
+        cursor_max = data_info["cursor_max"]
+
+        # if no data has to by synced, we return no slice 
+        if records_count == 0:
+            slices = [{"from": stream_state.get(cursor_field), "to": stream_state.get(cursor_field)}]
+        else:
+            slices = self._get_cursor_slices(cursor_field=cursor_field, records_count=records_count, cursor_min=cursor_min, cursor_max=cursor_max)
+
+            # if it is the initial sync (i.e. no cursor state), we decrease the cursor_min value by one, to be sure that
+            # the cypher query include records with cursor_min  
+            if stream_state.get(cursor_field) is None:
+                slices[0]["from"] = slices[0]["from"] - 1
+
+        return slices
+
+
+    def _get_cursor_slices(self, cursor_field: List[str], records_count: int, cursor_min, cursor_max) -> Iterable[Optional[Mapping[str, Any]]]:
         """
         Generate cursor slices for incremental sync.
         
@@ -287,31 +331,6 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         :param stream_state:
         :return:
         """
-        if isinstance(cursor_field, str):
-            cursor_field = [cursor_field]
-        
-        cursor_field = cursor_field[0]
-        stream_state = stream_state or {}
-
-
-        data_info = self._describe_slices(cursor_field=cursor_field, stream_state=stream_state)
-
-        records_count = data_info["records_count"]
-        cursor_min = data_info["cursor_min"]
-        cursor_max = data_info["cursor_max"]
-
-        # if no data has to by synced, we return [None] i.e. no slice
-        if records_count == 0:
-            return [None]
-
-        # Slice are supported for numbers only
-        # because we do not know how to generate slices for other types, we return [None] i.e. no slice feature
-        # get type of cursor_field
-        cursor_types = self.get_json_schema()["properties"][cursor_field]["type"]
-
-        if "number" not in cursor_types and "integer" not in cursor_types:
-            return [None]
-
         # limit the numbers of records for this sync process if _max_records_per_incremental_sync has been set
         # and _max_records_per_incremental_sync < records_count
         if self._max_records_per_incremental_sync is not None and self._max_records_per_incremental_sync < records_count:
@@ -346,10 +365,6 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
             slice_start_values = [cursor_values[percentile] for percentile in percentiles]
             slice_end_values = [cursor_values[percentile] for percentile in percentiles]
 
-        # if it is the initial sync (i.e. no cursor state), we decrease the cursor_min value by one, to be sure that
-        # the cypher query include records with cursor_min  
-        if stream_state.get(cursor_field) is None:
-            cursor_min = cursor_min - 1
 
         slice_start_values.insert(0, cursor_min)
         slice_end_values.append(cursor_max)
@@ -382,13 +397,14 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
             cursor_field = cursor_field[0]
             query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
 
-            if stream_slice is None:
-                # if sync mode is incremental but no slices have been configured
-                # we get cursor_values from and to for 1 slice
-                stream_slice = self._get_cursor_slices(sync_mode=sync_mode, cursor_field=cursor_field, stream_state=stream_state)[0]
+            if self._checkpointing_mode == "interval":
+                # # if sync mode is incremental but no slices have been configured
+                # # we get cursor_values from and to for 1 slice
+                # stream_slice = self._get_cursor_slices(sync_mode=sync_mode, cursor_field=cursor_field, stream_state=stream_state)[0]
 
                 # interval based checkpointing needs records to be sorted by cursor_field ASC
                 query_order = "ORDER BY {} ASC".format(query_cursor)
+
 
             query_where = "WHERE {} > $from AND {} <= $to".format(query_cursor, query_cursor)
             params = {"from": stream_slice["from"], "to": stream_slice["to"]}
@@ -466,6 +482,8 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
         query = {"query": query, "params": params}
         res = next(self._client.fetch_results(query))
 
+        # if records_count equals 0 (i.e. stream_state higher than cursor max),
+        # cursor_min and cursor_max will be None, so we set them to the stream_state value
         info["records_count"] = res[0]
         info["cursor_min"] = res[1]
         info["cursor_max"] = res[2]
@@ -650,7 +668,7 @@ class RelationshipStream(IncrementalNeo4jEntityStream):
         dict_record["_end"] = record[return_var_name].end_node.id
         dict_record["_type"] = record[return_var_name].type
 
-        return record
+        return dict_record
 
 
     def _get_specific_json_schema(self) -> Mapping[str, Any]:
