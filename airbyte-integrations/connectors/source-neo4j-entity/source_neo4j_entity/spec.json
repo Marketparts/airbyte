@@ -4,13 +4,13 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Neo4j Entity Spec",
     "type": "object",
-    "required": ["host", "database", "username", "password"],
+    "required": ["scheme", "host", "port", "username", "password"],
     "additionalProperties": false,
     "properties": {
       "scheme": {
         "description": "Uri connection scheme.",
         "type": "string",
-        "enum": ["bolt", "http"],
+        "enum": ["bolt", "neo4j"],
         "order": 0
       },
       "host": {
@@ -28,7 +28,7 @@
         "order": 2
       },
       "database": {
-        "description": "Name of the database.",
+        "description": "Name of the database. Leave it empty for default database or if your version of Neo4j is prior to 4.0.",
         "type": "string",
         "examples": ["neo4j"],
         "order": 3
@@ -52,13 +52,46 @@
         "default": "STANDARD",
         "enum": ["STANDARD"]
       },
-      "state_checkpoint_interval": {
-        "type": "integer",
-        "title": "Incremental sync option: state checkpoint interval.",
-        "description": "Number of records to be read before checkpointing state",
+      "incremental_sync_mode": {
+        "type": "object",
+        "title": "Incremental sync checkpointing mode",
+        "description": "",
         "order": 7,
-        "default": 1000,
-        "examples": [100, 1000, 2000, 5000, 10000]
+        "oneOf": [ {
+          "title": "Interval-based checkpointing",
+          "required": ["checkpointing_mode", "state_checkpoint_interval"],
+          "properties": {
+            "checkpointing_mode": {
+              "type": "string",
+              "const": "interval"
+            },
+            "state_checkpoint_interval": {
+              "type": "integer",
+              "title": "Number of records",
+              "description": "Number of records to be read before checkpointing state",
+              "order": 0,
+              "default": 1000,
+              "examples": [100, 1000, 2000, 5000, 10000]
+            }
+          }
+        },
+        {
+          "title": "Slices",
+          "required": ["slices_count_per_incremental_sync"],
+          "properties": {
+            "checkpointing_mode": {
+              "type": "string",
+              "const": "slices"
+            },
+            "slices_count_per_incremental_sync": {
+              "type": "integer",
+              "title": "Number of balanced slices",
+              "description": "Number of balanced slices to generate per sync.",
+              "order": 0,
+              "examples": [10]
+            }
+          }
+        }]
       },
       "max_records_per_incremental_sync": {
         "type": "integer",
@@ -66,13 +99,6 @@
         "description": "Maximum number of records that will be read within a sync launch. Useful if you have a high volume of data but requires to run/schedule multiple syncs to synchronize all data",
         "order": 8,
         "examples": [1000000]
-      },
-      "slices_count_per_incremental_sync": {
-        "type": "integer",
-        "title": "Incremental sync option: number of slices",
-        "description": "Number of slices to generate per sync. Mandatory to activate slices",
-        "order": 9,
-        "examples": [10]
       }
     }
   }
