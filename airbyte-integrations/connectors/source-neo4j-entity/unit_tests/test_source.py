@@ -21,7 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-
+import pytest
 
 from source_neo4j_entity.source import SourceNeo4jEntity
 from unittest.mock import MagicMock, PropertyMock
@@ -30,41 +30,53 @@ from source_neo4j_entity.neo4j import Neo4jClient
 from source_neo4j_entity.streams import IncrementalNeo4jEntityStream, NodeStream, RelationshipStream
 
 
+@pytest.fixture
+def config_mock():
+    # use a real hostname as neo4j driver will try to resolve DNS hostname 
+    config = {
+        "scheme": "bolt", "host": "google.com", "port": 80, "username": "myusername", "password": "mypassword",
+        "incremental_sync_mode": {
+            "checkpointing_mode": "slices",
+            "slices_count_per_incremental_sync": 10 
+        }
+    }
+    return config
 
-def test_check_connection_success(mocker):
+
+def test_check_connection_success(mocker, config_mock):
     mocker.patch.object(Neo4jClient, "verify_connectivity", return_value="myvalue")
     source = SourceNeo4jEntity()
-    config_mock, logger_mock = MagicMock(), MagicMock()
+    logger_mock = MagicMock()
     assert source.check_connection(logger_mock, config_mock) == (True, None)
 
 
-def test_check_connection_failure(mocker):
+def test_check_connection_failure(mocker, config_mock):
     mocker.patch.object(Neo4jClient, "verify_connectivity", side_effect=Exception("error"))
     source = SourceNeo4jEntity()
-    config_mock, logger_mock = MagicMock(), MagicMock()
+    logger_mock = MagicMock()
     
     assert isinstance(source.check_connection(logger_mock, config_mock), tuple)
     assert source.check_connection(logger_mock, config_mock)[0] == False
     assert isinstance(source.check_connection(logger_mock, config_mock)[1], str)
 
 
-def test_streams_empty(mocker):
+def test_streams_empty(mocker, config_mock):
     mocker.patch.object(Neo4jClient, "node_labels", new_callable=PropertyMock, return_value =[])
     mocker.patch.object(Neo4jClient, "relationship_types", new_callable=PropertyMock, return_value =[])
     source = SourceNeo4jEntity()
-    config_mock = {}
+    
     streams = source.streams(config_mock)
     
     assert isinstance(streams, list)
     assert len(streams) == 0
 
 
-def test_streams_nodes_only(mocker):
+def test_streams_nodes_only(mocker, config_mock):
     mocker.patch.object(Neo4jClient, "node_labels", new_callable=PropertyMock, return_value =["node_1", "node_2", "node_3"])
     mocker.patch.object(Neo4jClient, "node_json_schemas", new_callable=PropertyMock, return_value ={"node_1": {}, "node_2": {}, "node_3": {}})
     mocker.patch.object(Neo4jClient, "relationship_types", new_callable=PropertyMock, return_value =[])
     source = SourceNeo4jEntity()
-    config_mock = {}
+    
     streams = source.streams(config_mock)
     
     assert isinstance(streams, list)
@@ -72,12 +84,12 @@ def test_streams_nodes_only(mocker):
     assert all([isinstance(stream, NodeStream) for stream in streams])
 
 
-def test_streams_relationships_only(mocker):
+def test_streams_relationships_only(mocker, config_mock):
     mocker.patch.object(Neo4jClient, "node_labels", new_callable=PropertyMock, return_value =[])
     mocker.patch.object(Neo4jClient, "relationship_types", new_callable=PropertyMock, return_value =["rel_1", "rel_2"])
     mocker.patch.object(Neo4jClient, "relationship_json_schemas", new_callable=PropertyMock, return_value ={"rel_1": {}, "rel_2": {}})
     source = SourceNeo4jEntity()
-    config_mock = {}
+    
     streams = source.streams(config_mock)
     
     assert isinstance(streams, list)
@@ -85,13 +97,13 @@ def test_streams_relationships_only(mocker):
     assert all([isinstance(stream, RelationshipStream) for stream in streams])
 
 
-def test_streams_nodes_and_relationships(mocker):
+def test_streams_nodes_and_relationships(mocker, config_mock):
     mocker.patch.object(Neo4jClient, "node_labels", new_callable=PropertyMock, return_value =["node_1", "node_2", "node_3"])
     mocker.patch.object(Neo4jClient, "node_json_schemas", new_callable=PropertyMock, return_value ={"node_1": {}, "node_2": {}, "node_3": {}})
     mocker.patch.object(Neo4jClient, "relationship_types", new_callable=PropertyMock, return_value =["rel_1", "rel_2"])
     mocker.patch.object(Neo4jClient, "relationship_json_schemas", new_callable=PropertyMock, return_value ={"rel_1": {}, "rel_2": {}})
     source = SourceNeo4jEntity()
-    config_mock = {}
+    
     streams = source.streams(config_mock)
     
     assert isinstance(streams, list)
