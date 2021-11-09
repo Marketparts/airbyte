@@ -36,6 +36,7 @@ from airbyte_cdk.models import (
     AirbyteMessage,
     ConfiguredAirbyteStream,
     SyncMode,
+    AirbyteCatalog
 )
 ################
 
@@ -81,6 +82,17 @@ class SourceNeo4jEntity(AbstractSource):
 
         return check_result
 
+    def discover(self, logger: AirbyteLogger, config: Mapping[str, Any]) -> AirbyteCatalog:
+        """
+        Implements the Discover operation from the Airbyte Specification. See https://docs.airbyte.io/architecture/airbyte-specification.
+        
+        Overrided from AbstractSource to clear cache when discovering streams only
+        """
+        client = Neo4jClient(config=config, clear_cache=True, preload_schema=True)
+
+        streams = [stream.as_airbyte_stream() for stream in self.streams(config=config)]
+        return AirbyteCatalog(streams=streams)
+
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         """
@@ -88,7 +100,7 @@ class SourceNeo4jEntity(AbstractSource):
 
         :param config: A Mapping of the user input configuration as defined in the connector spec.
         """
-        client = Neo4jClient(config=config, preload_schemas=True)
+        client = Neo4jClient(config=config, preload_schema=True)
         
         streams = []
         for label in client.node_labels:

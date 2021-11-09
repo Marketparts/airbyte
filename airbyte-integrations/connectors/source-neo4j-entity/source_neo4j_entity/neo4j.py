@@ -21,12 +21,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
+import tempfile
+import os
+
 from airbyte_cdk import AirbyteLogger
 from typing import Any, List, Mapping
 
 from neo4j import GraphDatabase,  DEFAULT_DATABASE
 
-
+from diskcache import Cache
 
 class Neo4jClient:
     """
@@ -42,7 +45,7 @@ class Neo4jClient:
         "LongArray": "array"
     }
 
-    def __init__(self, config: Mapping[str, Any], preload_schemas: bool = False) -> None:
+    def __init__(self, config: Mapping[str, Any], clear_cache: bool = False, preload_schema = False) -> None:
         if not isinstance(config, Mapping):
             raise ValueError("Config must be a dict")
         
@@ -58,10 +61,15 @@ class Neo4jClient:
             raise ValueError("Config must have a 'password' key")
 
         self._config = config
+        if clear_cache:
+            self.clear_cache()
 
-        if preload_schemas:
-            self.node_json_schemas
-            self.relationship_json_schemas
+        # preload json schema
+        if preload_schema:
+            self.node_labels
+            self.relationship_types
+            self._get_node_json_schemas_v2()
+            self._get_relationship_json_schemas_v2()
 
 
     @property
@@ -132,33 +140,57 @@ class Neo4jClient:
 
 
     @property
-    def node_labels(self) -> List[str]:
+    def node_labels(self, flush_cache: bool=False) -> List[str]:
         """
         Get labels of all existing nodes in the database
         :return: list of node labels
         """
         if not hasattr(self, "_node_labels"):
-            query = "CALL db.labels();"
-            transform_func = lambda x: x.get("label")
+            # we use caching to avoid multiple cypher queries
+            cache_direcory_path  = self._get_cache_directory()
+            with Cache(cache_direcory_path) as cache:
+                cache_key = self._generate_cache_key("node_labels")
+                self._node_labels = cache.get(cache_key)
 
-            results = self.fetch_results(cypher_query=query, transform_func=transform_func)
-            self._node_labels = sorted([x for x in results], key=str.casefold)
+                if self._node_labels is not None and not flush_cache:
+                    self.logger.debug("{} loaded from cache".format(cache_key))
+                else:
+                    # if the value is not in cache, we launch the cypher query to the database
+                    query = "CALL db.labels();"
+                    transform_func = lambda x: x.get("label")
+
+                    results = self.fetch_results(cypher_query=query, transform_func=transform_func)
+                    self._node_labels = sorted([x for x in results], key=str.casefold)
+
+                    cache.set(key=cache_key, value=self._node_labels)
 
         return self._node_labels
 
 
     @property
-    def relationship_types(self) -> List[str]:
+    def relationship_types(self, flush_cache: bool=False) -> List[str]:
         """
         Get types of all existing relationships in the database
         :return: list of relationship types
         """
         if not hasattr(self, "_relationship_types"):
-            query = "CALL db.relationshipTypes();"
-            transform_func = lambda x: x.get("relationshipType")
+            # we use caching to avoid multiple cypher queries
+            cache_direcory_path  = self._get_cache_directory()
+            with Cache(cache_direcory_path) as cache:
+                cache_key = self._generate_cache_key("relationship_types")
+                self._relationship_types = cache.get(cache_key)
 
-            results = self.fetch_results(cypher_query=query, transform_func=transform_func)
-            self._relationship_types = sorted([x for x in results], key=str.casefold)
+                if self._relationship_types is not None and not flush_cache:
+                    self.logger.debug("{} loaded from cache".format(cache_key))
+                else:
+                    # if the value is not in cache, we launch the cypher query to the database
+                    query = "CALL db.relationshipTypes();"
+                    transform_func = lambda x: x.get("relationshipType")
+
+                    results = self.fetch_results(cypher_query=query, transform_func=transform_func)
+                    self._relationship_types = sorted([x for x in results], key=str.casefold)
+
+                    cache.set(key=cache_key, value=self._relationship_types)
         
         return self._relationship_types
 
@@ -181,59 +213,83 @@ class Neo4jClient:
         return self._get_relationship_json_schemas_v2()
 
 
-    def _get_node_json_schemas_v2(self) -> Mapping[str, Any]:
+    def _get_node_json_schemas_v2(self, flush_cache: bool=False) -> Mapping[str, Any]:
         """
         Get schema of each existing nodes (i.e. properties and types)
         :return: dict schema
         """
         if not hasattr(self, "_node_json_schemas"):
-            self._node_json_schemas = {}
+            # we use caching as the cypher query can takes a long time
+            cache_direcory_path  = self._get_cache_directory()
+            with Cache(cache_direcory_path) as cache:
+                cache_key = self._generate_cache_key("node_json_schemas")
+                self._node_json_schemas = cache.get(cache_key)
 
-            if len(self.node_labels) > 0:
-                query = "CALL db.schema.nodeTypeProperties();"
+                if self._node_json_schemas is not None and not flush_cache:
+                    self.logger.debug("{} loaded from cache".format(cache_key))
+                else:
+                    # if the value is not in cache, we launch the cypher query to the database
+                    self._node_json_schemas = {}
 
-                results = self.fetch_results(cypher_query=query)
+                    if len(self.node_labels) > 0:
+                        query = "CALL db.schema.nodeTypeProperties();"
 
-                # we construct the json_schema from the resultset
-                
-                for label in self.node_labels:
-                    self._node_json_schemas[label] = {}
+                        results = self.fetch_results(cypher_query=query)
 
-                for record in results:
-                    if record["propertyName"] is not None:
-                        for label in record["nodeLabels"]:
-                            self._node_json_schemas[label][record["propertyName"]] = {
-                                "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
-                                "required": record["mandatory"]
-                                }
+                        # we construct the json_schema from the resultset
+                        
+                        for label in self.node_labels:
+                            self._node_json_schemas[label] = {}
+
+                        for record in results:
+                            if record["propertyName"] is not None:
+                                for label in record["nodeLabels"]:
+                                    self._node_json_schemas[label][record["propertyName"]] = {
+                                        "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
+                                        "required": record["mandatory"]
+                                        }
+
+                        cache.set(key=cache_key, value=self._node_json_schemas)
 
         return self._node_json_schemas
 
 
-    def _get_relationship_json_schemas_v2(self) -> Mapping[str, Any]:
+    def _get_relationship_json_schemas_v2(self, flush_cache: bool=False) -> Mapping[str, Any]:
         """
         Get schema of each existing relationships (i.e. properties and types)
         :return: dict schema
         """
         if not hasattr(self, "_relationship_json_schemas"):
-            self._relationship_json_schemas = {}
+            # we use caching as the cypher query can takes a long time
+            cache_direcory_path  = self._get_cache_directory()
+            with Cache(cache_direcory_path) as cache:
+                cache_key = self._generate_cache_key("relationship_json_schemas")
+                self._relationship_json_schemas = cache.get(cache_key)
 
-            if len(self.relationship_types) > 0:
-                query = "CALL db.schema.relTypeProperties();"
+                if self._relationship_json_schemas is not None and not flush_cache:
+                    self.logger.debug("{} loaded from cache".format(cache_key))
+                else:
+                    # if the value is not in cache, we launch the cypher query to the database
+                    self._relationship_json_schemas = {}
 
-                results = self.fetch_results(cypher_query=query)
+                    if len(self.relationship_types) > 0:
+                        query = "CALL db.schema.relTypeProperties();"
 
-                # we construct the json_schema from the resultset
-                for type in self.relationship_types:
-                    self._relationship_json_schemas[type] = {}
+                        results = self.fetch_results(cypher_query=query)
 
-                for record in results:
-                    if record["propertyName"] is not None:
-                        type = record["relType"].replace("`", "").replace(":", "")
-                        self._relationship_json_schemas[type][record["propertyName"]] = {
-                            "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
-                            "required": record["mandatory"]
-                            }
+                        # we construct the json_schema from the resultset
+                        for type in self.relationship_types:
+                            self._relationship_json_schemas[type] = {}
+
+                        for record in results:
+                            if record["propertyName"] is not None:
+                                type = record["relType"].replace("`", "").replace(":", "")
+                                self._relationship_json_schemas[type][record["propertyName"]] = {
+                                    "type": self._map_types_from_neo4j_to_json_schema(record["propertyTypes"]),
+                                    "required": record["mandatory"]
+                                    }
+
+                        cache.set(key=cache_key, value=self._relationship_json_schemas)
 
         return self._relationship_json_schemas
 
@@ -445,3 +501,26 @@ class Neo4jClient:
         query = " ".join(query.split()) # remove extra inner spaces
 
         return query
+
+    def _generate_cache_key(self, key: str) -> str:
+        """
+        Generate a key for caching
+        """
+        return "{}_{}_{}".format(self._config["host"], self.database, key)
+
+    def _get_cache_directory(self):
+        """
+        Get directory where cache files will be stored
+        """
+        cache_dirname = "{}_{}_{}".format(self._config["host"], str(self._config["port"]), self.database)
+        return os.sep.join([tempfile.gettempdir(), "diskcache", cache_dirname])
+
+
+    def clear_cache(self):
+        """
+        Clear cache of all cypher results
+        """
+        cache_direcory_path  = self._get_cache_directory()
+        with Cache(cache_direcory_path) as cache:
+            self.logger.debug("Clearing cache of cypher results")            
+            cache.clear()

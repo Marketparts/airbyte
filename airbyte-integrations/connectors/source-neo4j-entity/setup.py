@@ -28,6 +28,7 @@ from setuptools import find_packages, setup
 MAIN_REQUIREMENTS = [
     "airbyte-cdk",
     "neo4j~=4.3",
+    "diskcache~=5.2.1",
 ]
 
 TEST_REQUIREMENTS = [
