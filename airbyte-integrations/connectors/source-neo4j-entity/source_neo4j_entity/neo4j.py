@@ -506,15 +506,15 @@ class Neo4jClient:
         """
         Generate a key for caching
         """
-        return "{}_{}_{}".format(self._config["host"], self.database, key)
+        return "{}_{}_{}_{}".format(self._config["host"], self._config["port"], self.database, key)
 
     def _get_cache_directory(self):
         """
         Get directory where cache files will be stored
         """
-        cache_dirname = "{}_{}_{}".format(self._config["host"], str(self._config["port"]), self.database)
-        return os.sep.join([tempfile.gettempdir(), "diskcache", cache_dirname])
-
+        source_root_dirpath = os.sep.join([os.getenv("LOCAL_ROOT", "/local"), "source-neo4j-entity", "cache"])
+        
+        return source_root_dirpath
 
     def clear_cache(self):
         """
