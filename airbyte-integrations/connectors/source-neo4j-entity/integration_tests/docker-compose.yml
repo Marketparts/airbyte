@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:3.5.14-enterprise
+    image: neo4j:${NEO4J_IMAGE_TAG}
     container_name: airbyte-neo4j-entity-tests
     ports:
       # we do not use the default bolt port 7687 to be able to run tests when we have started the neo4 container used for development 

@@ -167,8 +167,8 @@ class Neo4jTestInstance(object):
 
 
 if __name__ == "__main__":
-    if sys.argv[1] not in ["start", "stop"]:
-        print("Command must be 'start' or 'stop'. Unknow command '{}'.".format(sys.argv[1]))
+    if len(sys.argv) == 1 or sys.argv[1] not in ["start", "stop"]:
+        sys.exit("Command must be 'start' or 'stop'")
 
     neo4j = Neo4jTestInstance(docker_compose_filepath=os.path.dirname(__file__))
 
