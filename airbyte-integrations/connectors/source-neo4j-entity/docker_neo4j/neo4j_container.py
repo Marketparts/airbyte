@@ -68,7 +68,7 @@ class Neo4jTestInstance(object):
             auth=(self._config["username"], self._config["password"])
         )
 
-        self._wait_database_ready(max_time = 20)
+        self._wait_database_ready(max_time = 30)
         print("Neo4j container is ready to be used")
 
 
@@ -90,8 +90,8 @@ class Neo4jTestInstance(object):
             if max_time == 0:
                 raise e
             
-            max_time = max_time - 1
-            time.sleep(1)
+            max_time = max_time - 2
+            time.sleep(2)
             self._wait_database_ready(max_time=max_time)
 
 
@@ -108,17 +108,13 @@ class Neo4jTestInstance(object):
         """
         Create a relationship between two nodes
         """
-        query = """
-        MATCH (n:{} {{primary_key: {}}})
-        MATCH (m:{} {{primary_key: {}}})
-        CALL apoc.create.relationship(n, $type, $properties, m)
-        YIELD rel
-        RETURN rel;
-        """.format(
-            from_label, from_primary_key,
-            to_label, to_primary_key
-        )
-        return tx.run(query, type=type, properties=properties)
+        query = f"""
+        MATCH (n:{from_label}), (m:{to_label})
+        WHERE n.primary_key = {from_primary_key} AND m.primary_key = {to_primary_key}
+        CREATE (n)-[r:{type} $properties]->(m)
+        RETURN type(r);
+        """
+        return tx.run(query, properties=properties)
 
 
     def populate_test_data(self):
@@ -149,6 +145,20 @@ class Neo4jTestInstance(object):
         with self.driver.session() as session:
             session.write_transaction(self.neo4j_create_nodes_tx, node_labels, node_properties)
 
+
+        # creates nodes node_4 (single label)
+        node_properties = []
+        node_labels = ["node_4"]
+        ids = range(1, 51, 1)
+        timestamps = range(1633103553000, 1635447843000, 86400) # generates 50 values
+
+        for id in ids:
+            node_properties.append({"primary_key": id, "prop_4": "value {}".format(id), "prop_5": [1, 3, 5, 6], "updated_at": timestamps[id - 1]})
+
+        with self.driver.session() as session:
+            session.write_transaction(self.neo4j_create_nodes_tx, node_labels, node_properties)
+
+
         # create relationships
         rel_properties = {}
         rel_type = "rel_1"
@@ -163,6 +173,20 @@ class Neo4jTestInstance(object):
                     to_primary_key=id,
                     type=rel_type,
                     properties=rel_properties)
+
+
+        rel_type = "rel_2"
+        
+        with self.driver.session() as session:
+            for id in ids:
+                session.write_transaction(
+                    self.neo4j_create_relationship_tx,
+                    from_label="node_2",
+                    from_primary_key=id,
+                    to_label="node_4",
+                    to_primary_key=id,
+                    type=rel_type,
+                    properties={"prop_6": id})
 
 
 
