@@ -23,6 +23,7 @@
 #
 
 import pytest
+import json
 from unittest.mock import MagicMock
 
 from airbyte_cdk.models import SyncMode
@@ -45,10 +46,7 @@ def mock_incremental_base_class(mocker):
 @pytest.fixture
 def stream_config():
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "slices",
-            "slices_count_per_incremental_sync": 10 
-        }
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10}}"
     }
 
     return config
@@ -56,11 +54,7 @@ def stream_config():
 
 def test_set_config_success(mock_neo4j_client, mock_incremental_base_class):
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "slices",
-            "slices_count_per_incremental_sync": 10 
-        },
-        "max_records_per_incremental_sync": 100,
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10, \"max_records_per_incremental_sync\": 100}}"
     }
 
     stream = IncrementalNeo4jEntityStream(client=mock_neo4j_client, config=config)
@@ -68,40 +62,31 @@ def test_set_config_success(mock_neo4j_client, mock_incremental_base_class):
     assert hasattr(stream, "_checkpointing_mode")
     assert hasattr(stream, "_max_records_per_incremental_sync")
     assert hasattr(stream, "_slices_count_per_incremental_sync")
-
-    assert stream._checkpointing_mode == config["incremental_sync_mode"]["checkpointing_mode"]
-    assert stream._max_records_per_incremental_sync == config["max_records_per_incremental_sync"]
-    assert stream._slices_count_per_incremental_sync == config["incremental_sync_mode"]["slices_count_per_incremental_sync"]
+    
+    config["incremental_sync_settings"] = json.loads(config["incremental_sync_settings"])
+    assert stream._checkpointing_mode == config["incremental_sync_settings"]["DEFAULT"]["checkpointing_mode"]
+    assert stream._max_records_per_incremental_sync == config["incremental_sync_settings"]["DEFAULT"]["max_records_per_incremental_sync"]
+    assert stream._slices_count_per_incremental_sync == config["incremental_sync_settings"]["DEFAULT"]["slices_count_per_incremental_sync"]
 
 
 
 def test_set_config_failure(mock_neo4j_client, mock_incremental_base_class):
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "slices",
-            "slices_count_per_incremental_sync": "test" 
-        }
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": \"test\"}}"
     }
 
     with pytest.raises(ValueError) as e:
         stream = IncrementalNeo4jEntityStream(client=mock_neo4j_client, config=config)
 
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "slices",
-            "slices_count_per_incremental_sync": 10 
-        },
-        "max_records_per_incremental_sync": "test"
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10, \"max_records_per_incremental_sync\": \"test\"}}"
     }
     with pytest.raises(ValueError) as e:
         stream = IncrementalNeo4jEntityStream(client=mock_neo4j_client, config=config)
 
 
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "interval",
-            "state_checkpoint_interval": "test" 
-        }
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"interval\", \"state_checkpoint_interval\": \"test\"}}"
     }
     with pytest.raises(ValueError) as e:
         stream = IncrementalNeo4jEntityStream(client=mock_neo4j_client, config=config)
@@ -109,13 +94,11 @@ def test_set_config_failure(mock_neo4j_client, mock_incremental_base_class):
 
 def test_state_checkpoint_interval(mock_neo4j_client, mock_incremental_base_class):
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "interval",
-            "state_checkpoint_interval": 10
-        }
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"interval\", \"state_checkpoint_interval\": 10}}"
     }
     stream = IncrementalNeo4jEntityStream(client=mock_neo4j_client, config=config)
-    assert stream.state_checkpoint_interval == config["incremental_sync_mode"]["state_checkpoint_interval"]
+    config["incremental_sync_settings"] = json.loads(config["incremental_sync_settings"])
+    assert stream.state_checkpoint_interval == config["incremental_sync_settings"]["DEFAULT"]["state_checkpoint_interval"]
 
 
 def test_source_defined_cursor(mock_neo4j_client, mock_incremental_base_class, stream_config):

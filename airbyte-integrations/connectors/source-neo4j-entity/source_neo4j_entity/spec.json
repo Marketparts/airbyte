@@ -4,7 +4,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Neo4j Entity Spec",
     "type": "object",
-    "required": ["scheme", "host", "port", "username", "password"],
+    "required": ["scheme", "host", "port", "username", "password", "enable_dynamic_schemas"],
     "additionalProperties": false,
     "properties": {
       "scheme": {
@@ -44,11 +44,39 @@
         "airbyte_secret": true,
         "order": 5
       },
+      "enable_dynamic_schemas": {
+        "type": "boolean",
+        "title": "Dynamically fetch node/relationship schemas from database.",
+        "description": "If enabled, node/relatonship schemas are generated dynamically from a sample of the database. This query execution time depends on the volumetry of the database.",
+        "order": 6,
+        "default": false
+      },
+      "custom_streams": {
+        "type": "string",
+        "title": "Custom streams",
+        "description": "Custom stream to sync data with cypher queries",
+        "order": 7,
+        "examples": ["{\"my_stream_name\": {\"match_query\": \"MATCH (A)-[:rel]->(B)\", \"return_query\": \"RETURN A, B.primary_key\", \"cursor_field\": \"A.timestamp\"}}"]
+      },
+      "json_schemas": {
+        "type": "string",
+        "title": "JSON Schemas",
+        "description": "JSON Schemas for node/relationship (if auto fetch is disabled) or custom streams",
+        "order": 7,
+        "examples": ["{\"node_label_1\": {\"prop_1\":{\"type\":\"integer\"}}}"]
+      },
+      "incremental_sync_settings": {
+        "type": "string",
+        "title": "Incremental sync settings for streams",
+        "description": "Settings for streams to be sync in incremental mode. To set default settings for all streams, user DEFAULT keyword as the stream name.",
+        "order": 8,
+        "examples": ["{\"DEFAULT\": {\"checkpointing_mode\": \"interval\", \"state_checkpoint_interval\": 1000}, \"my_stream_name\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10, \"max_records_per_incremental_sync\": 1000000}}"]
+      },
       "replication_method": {
         "type": "string",
         "title": "Replication Method",
         "description": "Replication method to use for extracting data from the database. STANDARD replication requires no setup on the DB side but will not be able to represent deletions incrementally. CDC uses the Binlog to detect inserts, updates, and deletes. This needs to be configured on the source database itself.",
-        "order": 6,
+        "order": 9,
         "default": "STANDARD",
         "enum": ["STANDARD"]
       },
@@ -56,7 +84,7 @@
         "type": "object",
         "title": "Incremental sync checkpointing mode",
         "description": "",
-        "order": 7,
+        "order": 10,
         "oneOf": [ {
           "title": "Interval-based checkpointing",
           "required": ["checkpointing_mode", "state_checkpoint_interval"],
@@ -97,7 +125,7 @@
         "type": "integer",
         "title": "Incremental sync option: maximum number of records per sync.",
         "description": "Maximum number of records that will be read within a sync launch. Useful if you have a high volume of data but requires to run/schedule multiple syncs to synchronize all data",
-        "order": 8,
+        "order": 11,
         "examples": [1000000]
       }
     }

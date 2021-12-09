@@ -5,10 +5,9 @@
   "database": "",
   "username": "neo4j",
   "password": "test",
-  "replication_method": "STANDARD",
-  "incremental_sync_mode": {
-    "checkpointing_mode": "slices",
-    "slices_count_per_incremental_sync": 10 
-  },
-  "max_records_per_incremental_sync": 50
+  "enable_dynamic_schemas": true,
+  "custom_streams": "{\"custom1\": {\"match_query\": \"MATCH (A:node_2)-[:rel_1]->(B:node_1)\", \"return_query\": \"RETURN A, B.primary_key as b_prim\", \"cursor_field\": \"A.updated_at\", \"json_schema\": {\"A.updated_at\":{\"type\":\"integer\"}}}}",
+  "json_schemas": "{\"custom1\": {\"A.updated_at\":{\"type\":\"integer\"}}}",
+  "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10, \"max_records_per_incremental_sync\": 50}}",
+  "replication_method": "STANDARD"
 }

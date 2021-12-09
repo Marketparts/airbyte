@@ -5,10 +5,7 @@
   "database": "",
   "username": "neo4j",
   "password": "wrong_password",
-  "replication_method": "STANDARD",
-  "incremental_sync_mode": {
-    "checkpointing_mode": "slices",
-    "slices_count_per_incremental_sync": 10 
-  },
-  "max_records_per_incremental_sync": 50
+  "enable_dynamic_schemas": true,
+  "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10, \"max_records_per_incremental_sync\": 50}}",
+  "replication_method": "STANDARD"
 }

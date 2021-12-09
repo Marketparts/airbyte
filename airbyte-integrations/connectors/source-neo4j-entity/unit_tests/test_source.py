@@ -35,10 +35,7 @@ def config_mock():
     # use a real hostname as neo4j driver will try to resolve DNS hostname 
     config = {
         "scheme": "bolt", "host": "google.com", "port": 80, "username": "myusername", "password": "mypassword",
-        "incremental_sync_mode": {
-            "checkpointing_mode": "slices",
-            "slices_count_per_incremental_sync": 10 
-        }
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10, \"max_records_per_incremental_sync\": 50}}"
     }
     return config
 

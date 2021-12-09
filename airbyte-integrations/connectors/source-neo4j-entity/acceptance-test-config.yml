@@ -1,6 +1,6 @@
 # See [Source Acceptance Tests](https://docs.airbyte.io/connector-development/testing-connectors/source-acceptance-tests-reference)
 # for more information about how to configure these tests
-connector_image: airbyte/source-neo4j-entity:dev
+connector_image: airbyte/source-neo4j-entity:0.1.4
 tests:
   spec:
     - spec_path: "source_neo4j_entity/spec.json"
@@ -13,10 +13,28 @@ tests:
     - config_path: "integration_tests/config_valid.json"
   basic_read:
     - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_full_refresh.json"
+      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_node.json"
       empty_streams: []
       expect_records:
-        path: "integration_tests/expected_records.txt"
+        path: "integration_tests/expected_records_node.txt"
+        extra_fields: no
+        exact_order: no
+        extra_records: no
+  basic_read:
+    - config_path: "integration_tests/config_valid.json"
+      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_relationship.json"
+      empty_streams: []
+      expect_records:
+        path: "integration_tests/expected_records_relationship.txt"
+        extra_fields: no
+        exact_order: no
+        extra_records: no
+  basic_read:
+    - config_path: "integration_tests/config_valid.json"
+      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_cypher.json"
+      empty_streams: []
+      expect_records:
+        path: "integration_tests/expected_records_cypher.txt"
         extra_fields: no
         exact_order: no
         extra_records: no
@@ -26,4 +44,4 @@ tests:
       future_state_path: "integration_tests/abnormal_state.json"
   full_refresh:
     - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_full_refresh.json"
+      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_node.json"

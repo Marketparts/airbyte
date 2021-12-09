@@ -22,6 +22,7 @@
 # SOFTWARE.
 #
 
+import json
 from typing import Any, List, Mapping, Tuple
 
 
@@ -41,7 +42,7 @@ from airbyte_cdk.models import (
 ################
 
 
-from source_neo4j_entity.streams import Neo4jClient
+from source_neo4j_entity.streams import CypherStream, Neo4jClient
 from source_neo4j_entity.streams import NodeStream, RelationshipStream
 
 
@@ -88,7 +89,10 @@ class SourceNeo4jEntity(AbstractSource):
         
         Overrided from AbstractSource to clear cache when discovering streams only
         """
-        client = Neo4jClient(config=config, clear_cache=True, preload_schema=True)
+        if config.get("enable_dynamic_schemas"):
+            client = Neo4jClient(config=config, clear_cache=True, preload_schema=True)
+        else:
+            client = Neo4jClient(config=config, clear_cache=True)
 
         streams = [stream.as_airbyte_stream() for stream in self.streams(config=config)]
         return AirbyteCatalog(streams=streams)
@@ -100,7 +104,7 @@ class SourceNeo4jEntity(AbstractSource):
 
         :param config: A Mapping of the user input configuration as defined in the connector spec.
         """
-        client = Neo4jClient(config=config, preload_schema=True)
+        client = Neo4jClient(config=config)
         
         streams = []
         for label in client.node_labels:
@@ -109,6 +113,11 @@ class SourceNeo4jEntity(AbstractSource):
         
         for type in client.relationship_types:
             streams.append(RelationshipStream(type=type, client=client, config=config))
+
+        custom_streams = json.loads(config.get("custom_streams", "{}"))
+        if isinstance(custom_streams, Mapping):
+            for name in custom_streams:
+                streams.append(CypherStream(name=name, client=client, config=config))
 
         return streams
 

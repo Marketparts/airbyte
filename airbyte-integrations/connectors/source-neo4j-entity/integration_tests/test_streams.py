@@ -33,17 +33,15 @@ from source_neo4j_entity.streams import NodeStream, RelationshipStream
 @pytest.fixture
 def stream_config():
     config = {
-        "incremental_sync_mode": {
-            "checkpointing_mode": "slices",
-            "slices_count_per_incremental_sync": 10 
-        }
+        "enable_dynamic_schemas": True,
+        "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"slices\", \"slices_count_per_incremental_sync\": 10}}"
     }
 
     return config
 
 
 def test_describe_slices(neo4j_container, stream_config):
-    client = Neo4jClient(config=pytest.neo4j_client_config)
+    client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
     stream = NodeStream(label="node_1", client=client, config=stream_config)
 
     expected = {
@@ -69,7 +67,7 @@ def test_describe_slices(neo4j_container, stream_config):
 
 
 def test_get_cursor_value_for_percentiles(neo4j_container, stream_config):
-    client = Neo4jClient(config=pytest.neo4j_client_config)
+    client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
 
     stream = NodeStream(label="node_1", client=client, config=stream_config)
 
@@ -87,7 +85,7 @@ def test_get_cursor_value_for_percentiles(neo4j_container, stream_config):
 
 
 def test_stream_slices(neo4j_container, stream_config):
-    client = Neo4jClient(config=pytest.neo4j_client_config)
+    client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
 
     stream = NodeStream(label="node_1", client=client, config=stream_config)
     
@@ -113,7 +111,7 @@ def test_stream_slices_greater_state(neo4j_container, stream_config):
     """
     Test when state is greater than max of cursor 
     """
-    client = Neo4jClient(config=pytest.neo4j_client_config)
+    client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
 
     stream = NodeStream(label="node_1", client=client, config=stream_config)
     
@@ -130,7 +128,7 @@ def test_read_records_greater_state(neo4j_container, stream_config):
     """
     Test no record returned when state is greater than max of cursor 
     """
-    client = Neo4jClient(config=pytest.neo4j_client_config)
+    client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
 
     stream = NodeStream(label="node_1", client=client, config=stream_config)
     
