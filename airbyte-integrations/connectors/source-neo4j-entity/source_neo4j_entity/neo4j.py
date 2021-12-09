@@ -512,7 +512,13 @@ class Neo4jClient:
         """
         Get directory where cache files will be stored
         """
-        source_root_dirpath = os.sep.join([os.getenv("LOCAL_ROOT", "/local"), "source-neo4j-entity", "cache"])
+        local_root_path = os.getenv("LOCAL_ROOT")
+
+        if local_root_path is None:
+            self.logger.warn("LOCAL_ROOT environment variable is not set. Default temp directory used for caching.")
+            local_root_path = tempfile.gettempdir()
+
+        source_root_dirpath = os.sep.join([local_root_path, "source-neo4j-entity", "cache"])
         
         return source_root_dirpath
 
