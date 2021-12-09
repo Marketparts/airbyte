@@ -2,6 +2,6 @@
 !Dockerfile
 !Dockerfile.test
 !main.py
-!source_neo4j_entity
+!source_neo4j
 !setup.py
 !secrets

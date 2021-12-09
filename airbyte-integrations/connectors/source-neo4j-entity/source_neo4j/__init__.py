@@ -23,6 +23,6 @@
 #
 
 
-from .source import SourceNeo4jEntity
+from .source import SourceNeo4j
 
-__all__ = ["SourceNeo4jEntity"]
+__all__ = ["SourceNeo4j"]

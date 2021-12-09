@@ -1,7 +1,7 @@
 services:
   neo4j:
     image: neo4j:${NEO4J_IMAGE_TAG}
-    container_name: airbyte-neo4j-entity-dev
+    container_name: airbyte-neo4j-dev
     ports:
       - 7474:7474
       - 7687:7687

@@ -27,7 +27,7 @@ from unittest.mock import PropertyMock
 
 from neo4j import BoltDriver
 
-from source_neo4j_entity.neo4j import Neo4jClient
+from source_neo4j.neo4j import Neo4jClient
 
 @pytest.fixture
 def neo4j_client_config():

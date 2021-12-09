@@ -40,7 +40,7 @@ TEST_REQUIREMENTS = [
 ]
 
 setup(
-    name="source_neo4j_entity",
+    name="source_neo4j",
     description="Source implementation for Neo4j Entity.",
     author="Airbyte",
     author_email="marc@marketparts.com",

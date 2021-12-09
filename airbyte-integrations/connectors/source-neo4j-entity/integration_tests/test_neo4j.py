@@ -26,7 +26,7 @@ import pytest
 
 from neo4j import BoltDriver
 
-from source_neo4j_entity.neo4j import Neo4jClient
+from source_neo4j.neo4j import Neo4jClient
 
 
 def test_init(neo4j_container):

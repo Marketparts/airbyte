@@ -26,8 +26,8 @@
 import sys
 
 from airbyte_cdk.entrypoint import launch
-from source_neo4j_entity import SourceNeo4jEntity
+from source_neo4j import SourceNeo4j
 
 if __name__ == "__main__":
-    source = SourceNeo4jEntity()
+    source = SourceNeo4j()
     launch(source, sys.argv[1:])

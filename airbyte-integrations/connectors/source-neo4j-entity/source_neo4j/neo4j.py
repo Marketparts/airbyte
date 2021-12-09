@@ -518,7 +518,7 @@ class Neo4jClient:
             self.logger.warn("LOCAL_ROOT environment variable is not set. Default temp directory used for caching.")
             local_root_path = tempfile.gettempdir()
 
-        source_root_dirpath = os.sep.join([local_root_path, "source-neo4j-entity", "cache"])
+        source_root_dirpath = os.sep.join([local_root_path, "source-neo4j", "cache"])
         
         return source_root_dirpath
 

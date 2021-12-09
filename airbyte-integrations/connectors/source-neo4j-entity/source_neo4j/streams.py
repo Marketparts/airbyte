@@ -35,7 +35,7 @@ from airbyte_cdk.sources.utils.schema_helpers import ResourceSchemaLoader
 from neo4j import GraphDatabase, graph, data
 from pydantic.errors import IntegerError
 
-from source_neo4j_entity.neo4j import Neo4jClient
+from source_neo4j.neo4j import Neo4jClient
 
 
 def package_name_from_class(cls: object) -> str:
@@ -46,7 +46,7 @@ def package_name_from_class(cls: object) -> str:
 
 
 
-class Neo4jEntityStream(Stream, ABC):
+class Neo4jStream(Stream, ABC):
     """
     Neo4j stream mapped to entities (nodes or relationships)
     """
@@ -175,7 +175,7 @@ class Neo4jEntityStream(Stream, ABC):
         return self._client.fetch_results(query, self._record_to_dict)
 
 
-class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
+class IncrementalNeo4jStream(Neo4jStream, ABC):
     """
     Base class for incremental neo4j streams
     """
@@ -592,7 +592,7 @@ class IncrementalNeo4jEntityStream(Neo4jEntityStream, ABC):
 
 
 
-class NodeStream(IncrementalNeo4jEntityStream):
+class NodeStream(IncrementalNeo4jStream):
     """
     Stream corresponding to a node entity
     """
@@ -675,7 +675,7 @@ class NodeStream(IncrementalNeo4jEntityStream):
 
 
 
-class RelationshipStream(IncrementalNeo4jEntityStream):
+class RelationshipStream(IncrementalNeo4jStream):
     """
     Stream corresponding to a relationship entity
     """
@@ -758,7 +758,7 @@ class RelationshipStream(IncrementalNeo4jEntityStream):
         return f"RETURN {self.name}"
 
 
-class CypherStream(IncrementalNeo4jEntityStream):
+class CypherStream(IncrementalNeo4jStream):
     """
     Stream corresponding to a custom cypher query
     """

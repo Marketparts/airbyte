@@ -26,8 +26,8 @@ from typing import Iterable
 import pytest
 
 from airbyte_cdk.models import SyncMode
-from source_neo4j_entity.neo4j import Neo4jClient
-from source_neo4j_entity.streams import NodeStream, RelationshipStream
+from source_neo4j.neo4j import Neo4jClient
+from source_neo4j.streams import NodeStream, RelationshipStream
 
 
 @pytest.fixture

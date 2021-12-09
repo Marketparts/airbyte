@@ -1,9 +1,9 @@
 # See [Source Acceptance Tests](https://docs.airbyte.io/connector-development/testing-connectors/source-acceptance-tests-reference)
 # for more information about how to configure these tests
-connector_image: airbyte/source-neo4j-entity:0.1.4
+connector_image: airbyte/source-neo4j:0.1.4
 tests:
   spec:
-    - spec_path: "source_neo4j_entity/spec.json"
+    - spec_path: "source_neo4j/spec.json"
   connection:
     - config_path: "integration_tests/config_valid.json"
       status: "succeed"

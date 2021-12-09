@@ -5,7 +5,7 @@ plugins {
 }
 
 airbytePython {
-    moduleDirectory 'source_neo4j_entity'
+    moduleDirectory 'source_neo4j'
 }
 
 dependencies {
