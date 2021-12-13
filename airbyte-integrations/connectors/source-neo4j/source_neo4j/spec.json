@@ -79,54 +79,6 @@
         "order": 9,
         "default": "STANDARD",
         "enum": ["STANDARD"]
-      },
-      "incremental_sync_mode": {
-        "type": "object",
-        "title": "Incremental sync checkpointing mode",
-        "description": "",
-        "order": 10,
-        "oneOf": [ {
-          "title": "Interval-based checkpointing",
-          "required": ["checkpointing_mode", "state_checkpoint_interval"],
-          "properties": {
-            "checkpointing_mode": {
-              "type": "string",
-              "const": "interval"
-            },
-            "state_checkpoint_interval": {
-              "type": "integer",
-              "title": "Number of records",
-              "description": "Number of records to be read before checkpointing state",
-              "order": 0,
-              "default": 1000,
-              "examples": [100, 1000, 2000, 5000, 10000]
-            }
-          }
-        },
-        {
-          "title": "Slices",
-          "required": ["slices_count_per_incremental_sync"],
-          "properties": {
-            "checkpointing_mode": {
-              "type": "string",
-              "const": "slices"
-            },
-            "slices_count_per_incremental_sync": {
-              "type": "integer",
-              "title": "Number of balanced slices",
-              "description": "Number of balanced slices to generate per sync.",
-              "order": 0,
-              "examples": [10]
-            }
-          }
-        }]
-      },
-      "max_records_per_incremental_sync": {
-        "type": "integer",
-        "title": "Incremental sync option: maximum number of records per sync.",
-        "description": "Maximum number of records that will be read within a sync launch. Useful if you have a high volume of data but requires to run/schedule multiple syncs to synchronize all data",
-        "order": 11,
-        "examples": [1000000]
       }
     }
   }
