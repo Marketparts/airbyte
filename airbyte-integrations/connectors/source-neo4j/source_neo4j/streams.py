@@ -23,6 +23,7 @@
 #
 
 import json
+import re
 import inspect
 from abc import ABC, abstractmethod, abstractproperty
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Union
@@ -451,7 +452,6 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
                 include_max_limit=True,
                 max_strict=False
             )
-            query_where = f"WHERE {query_where}"
 
             params = self._get_cursor_params(
                 cursor_min=stream_slice["from"],
@@ -471,13 +471,17 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
 
         # Generate specific MATCH statements corresponding to node or relationship
         query_match = self._get_cypher_match_query()
+        
+        query_match_where = self._merge_match_and_cursor_where_queries(
+            match_query=query_match,
+            cursor_where_query=query_where
+        )
 
         # Generate specific RETURN statements corresponding to node or relationship
         query_return = self._get_cypher_return_query()
 
         query = f"""
-            {query_match}
-            {query_where}
+            {query_match_where}
             {query_return}
             {query_order}"""
 
@@ -523,15 +527,18 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
                 query_where.append(f"{cursor_identifier} >= $from{i}")
                 params = {f"from{i}": stream_state.get(name)}
 
+        query_where = " AND ".join(query_where)
 
         query_match = self._get_cypher_match_query()
-        query_where = " AND ".join(query_where)
-        query_where = f"WHERE {query_where}" if query_where != "" else ""
+        query_match_where = self._merge_match_and_cursor_where_queries(
+            match_query=query_match,
+            cursor_where_query=query_where
+        )
+        
         query_return = ", ".join(query_return)
         
         query = f"""
-            {query_match}
-            {query_where}
+            {query_match_where}
             RETURN
                 count({cursor_identifier}) AS count,
                 {query_return}
@@ -573,11 +580,14 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         params = self._get_cursor_params(cursor_min=cursor_min, cursor_max=cursor_max)
 
         query_match = self._get_cypher_match_query()
+        query_match_where = self._merge_match_and_cursor_where_queries(
+            match_query=query_match,
+            cursor_where_query=query_where
+        )
         main_cursor_identifier = self._get_cypher_identifier_for_cursor(cursor_field[0])
         
         query = f"""
-            {query_match}
-            WHERE {query_where}
+            {query_match_where}
             RETURN
                 count({main_cursor_identifier}) AS count
         """
@@ -653,7 +663,7 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         
         # construct where query for cursor
         # The query is very low if we pass the cursor min/max values as parameters, so we generate the query with the values
-        query_where = self._get_cursor_where_query(
+        cursor_where_query = self._get_cursor_where_query(
             cursor_field=cursor_field,
             min_strict=False,
             include_max_limit=True,
@@ -662,7 +672,11 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
             cursor_max=cursor_max
         )
         query_match = self._get_cypher_match_query()
-        
+        query_match_where = self._merge_match_and_cursor_where_queries(
+            match_query=query_match,
+            cursor_where_query=cursor_where_query
+        )
+
         query_return_cursor_values = []
         for i, name in enumerate(cursor_field):
             cursor_identifier = self._get_cypher_identifier_for_cursor(name)
@@ -674,8 +688,7 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         query = f"""
             WITH $percentiles as percentiles
             CALL apoc.cypher.mapParallel2("
-            {query_match}
-            WHERE {query_where}
+            {query_match_where}
             RETURN _ as percentile, {query_return_cursor_values}",
             {{}}, percentiles, size(percentiles), 60) YIELD value
             RETURN value
@@ -694,6 +707,24 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         
         return cursor_values
 
+
+    def _merge_match_and_cursor_where_queries(self, match_query: str, cursor_where_query: str) -> str:
+        """
+        Merge cursor where query with where clause in match query if existing
+        """
+        merge_query = match_query
+
+        if cursor_where_query != "":
+            match_query_parts = re.split("WHERE", match_query, flags=re.IGNORECASE)
+
+            if len(match_query_parts) > 1:
+                match_query_parts[1] = cursor_where_query + " AND " + match_query_parts[1]
+            else :
+                match_query_parts.append(cursor_where_query)
+
+            merge_query = " WHERE ".join(match_query_parts)
+
+        return merge_query
 
 
 class NodeStream(IncrementalNeo4jStream):
