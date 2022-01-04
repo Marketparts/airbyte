@@ -114,7 +114,7 @@ def test_cursor_field(mock_neo4j_client, mock_incremental_base_class, stream_con
 
 def test_get_updated_state(mock_neo4j_client, mock_incremental_base_class, stream_config):
     stream = IncrementalNeo4jStream(client=mock_neo4j_client, config=stream_config)
-    inputs = {"current_stream_state": None, "latest_record": {"id": 3, "updated_at": 1635361752}, "cursor_field": "updated_at"}
+    inputs = {"current_stream_state": None, "latest_record": {"id": 3, "updated_at": 1635361752}, "cursor_field": ["updated_at"]}
 
     expected_state = {"updated_at": 1635361752}
     assert stream.get_updated_state(**inputs) == expected_state
@@ -137,31 +137,29 @@ def test_get_cypher_identifier_for_cursor(mock_neo4j_client, mock_incremental_ba
     assert stream._get_cypher_identifier_for_cursor(cursor_field) == expected
 
 def test_describe_slices(mock_incremental_base_class, mocker, stream_config):
-    mocker.patch.object(Neo4jClient, "fetch_results", return_value=iter([[4, 1234, 5678]]))
+    mocker.patch.object(Neo4jClient, "fetch_results", return_value=iter([[4, [1234, 5678]]]))
     config = {"scheme": "bolt", "host": "google.com", "port": 80, "username": "myusername", "password": "mypassword"}
     client = Neo4jClient(config=config)
     stream = IncrementalNeo4jStream(client=client, config=stream_config)
 
     expected = {
-        "records_count": 4,
-        "cursor_min": 1234,
-        "cursor_max": 5678
+        "count": 4,
+        "min": [1234],
+        "max": [5678]
     }
 
-    assert stream._describe_slices(cursor_field="cursor") == expected
+    assert stream._describe_slices(cursor_field=["cursor"]) == expected
 
 
 def test_get_cursor_value_for_percentiles(mock_incremental_base_class, mocker, stream_config):
-    mocker.patch.object(Neo4jClient, "fetch_results", return_value=iter([{"percentile": 0.1, "cursor_value": 1234}, {"percentile": 0.2, "cursor_value": 5678}]))
+    mocker.patch.object(Neo4jClient, "fetch_results", return_value=iter([{"value": {"percentile": 0.1, "cursor_value_0": 1234}}, {"value": {"percentile": 0.2, "cursor_value_0": 5678}}]))
     config = {"scheme": "bolt", "host": "google.com", "port": 80, "username": "myusername", "password": "mypassword"}
     client = Neo4jClient(config=config)
     stream = IncrementalNeo4jStream(client=client, config=stream_config)
 
     expected = {
-        0.1: 1234,
-        0.2: 5678
+        0.1: [1234],
+        0.2: [5678]
     }
 
-    assert stream._get_cursor_value_for_percentiles(percentiles=[0.1,0.2], cursor_field="cursor", cursor_min=10, cursor_max=10000) == expected
-        
-
+    assert stream._get_cursor_value_for_percentiles(percentiles=[0.1,0.2], cursor_field=["cursor"], cursor_min=[10], cursor_max=[10000]) == expected

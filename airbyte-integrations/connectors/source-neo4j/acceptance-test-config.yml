@@ -1,47 +1,29 @@
 # See [Source Acceptance Tests](https://docs.airbyte.io/connector-development/testing-connectors/source-acceptance-tests-reference)
 # for more information about how to configure these tests
-connector_image: airbyte/source-neo4j:0.1.4
+connector_image: airbyte/source-neo4j:0.1.5
 tests:
   spec:
     - spec_path: "source_neo4j/spec.json"
   connection:
-    - config_path: "integration_tests/config_valid.json"
+    - config_path: "integration_tests/config/config_valid.json"
       status: "succeed"
-    - config_path: "integration_tests/config_invalid.json"
+    - config_path: "integration_tests/config/config_invalid.json"
       status: "failed"
   discovery:
-    - config_path: "integration_tests/config_valid.json"
+    - config_path: "integration_tests/config/config_valid.json"
   basic_read:
-    - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_node.json"
+    - config_path: "integration_tests/config/config_valid.json"
+      configured_catalog_path: "integration_tests/configured_catalog/configured_catalog_full_refresh_node.json"
       empty_streams: []
       expect_records:
-        path: "integration_tests/expected_records_node.txt"
-        extra_fields: no
-        exact_order: no
-        extra_records: no
-  basic_read:
-    - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_relationship.json"
-      empty_streams: []
-      expect_records:
-        path: "integration_tests/expected_records_relationship.txt"
-        extra_fields: no
-        exact_order: no
-        extra_records: no
-  basic_read:
-    - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_cypher.json"
-      empty_streams: []
-      expect_records:
-        path: "integration_tests/expected_records_cypher.txt"
+        path: "integration_tests/expected_results/expected_records_node.txt"
         extra_fields: no
         exact_order: no
         extra_records: no
   incremental:
-    - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_incremental.json"
+    - config_path: "integration_tests/config/config_valid.json"
+      configured_catalog_path: "integration_tests/configured_catalog/configured_catalog_incremental.json"
       future_state_path: "integration_tests/abnormal_state.json"
   full_refresh:
-    - config_path: "integration_tests/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog_full_refresh_node.json"
+    - config_path: "integration_tests/config/config_valid.json"
+      configured_catalog_path: "integration_tests/configured_catalog/configured_catalog_full_refresh_node.json"
