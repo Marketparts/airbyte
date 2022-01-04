@@ -201,6 +201,7 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         checkpointing_mode = None # disable incremental sync option by default
         max_records_per_incremental_sync = None # by default, there is no record limit
         state_checkpoint_interval = None # by default, no interval checkpointing is done
+        max_records_per_slice = None # by default, no slice is used
         slices_count_per_incremental_sync = None # by default, no slice is used
 
         if isinstance(stream_incremental_sync_settings, Mapping):
@@ -225,56 +226,33 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
                         raise ValueError(f"state_checkpoint_interval for stream {self.name} must be an integer")
                 
                 elif checkpointing_mode == "slices":
-                    # set number of slices per incremental sync
+                    max_records_per_slice = stream_incremental_sync_settings.get("max_records_per_slice")
                     slices_count_per_incremental_sync = stream_incremental_sync_settings.get("slices_count_per_incremental_sync")
-                    if slices_count_per_incremental_sync is None:
-                        raise ValueError(f"slices_count_per_incremental_sync for stream {self.name} must be specified")
-                    elif not isinstance(slices_count_per_incremental_sync, int):
+
+                    if max_records_per_slice is None and slices_count_per_incremental_sync is None:
+                        raise ValueError(f"Either max_records_per_slice or slices_count_per_incremental_sync for stream {self.name} must be specified")
+
+                    if max_records_per_slice is not None and slices_count_per_incremental_sync is not None:
+                        raise ValueError(f"max_records_per_slice and slices_count_per_incremental_sync for stream {self.name} cannot be both specified. Choose one or the other")
+
+                    if max_records_per_slice is not None and not isinstance(max_records_per_slice, int):
+                        raise ValueError(f"max_records_per_slice for stream {self.name} must be an integer")
+
+                    if isinstance(max_records_per_slice, int) and max_records_per_slice <= 0:
+                        raise ValueError(f"max_records_per_slice for stream {self.name} must be greater than zero")
+
+                    if slices_count_per_incremental_sync is not None and not isinstance(slices_count_per_incremental_sync, int):
                         raise ValueError(f"slices_count_per_incremental_sync for stream {self.name} must be an integer")
+
+                    if isinstance(slices_count_per_incremental_sync, int) and slices_count_per_incremental_sync <= 0:
+                        raise ValueError(f"slices_count_per_incremental_sync for stream {self.name} must be greater than zero")
+
 
         self._checkpointing_mode = checkpointing_mode
         self._max_records_per_incremental_sync = max_records_per_incremental_sync
         self._state_checkpoint_interval = state_checkpoint_interval
+        self._max_records_per_slice = max_records_per_slice
         self._slices_count_per_incremental_sync = slices_count_per_incremental_sync
-
-
-
-        # # set (approximative) maximum number of records per incremental sync
-        # max_records_per_incremental_sync = None
-
-        # max_records_per_incremental_sync_config = config.get("max_records_per_incremental_sync")
-        # if max_records_per_incremental_sync_config is not None:
-        #     if isinstance(max_records_per_incremental_sync_config, int):
-        #         max_records_per_incremental_sync = max_records_per_incremental_sync_config
-        #     else:
-        #         max_records_per_incremental_sync_config = json.loads(max_records_per_incremental_sync_config)
-        #         max_records_per_incremental_sync = max_records_per_incremental_sync_config.get(self.name)
-
-        #         if max_records_per_incremental_sync_config is not None and not isinstance(max_records_per_incremental_sync, int):
-        #             raise ValueError("max_records_per_incremental_sync must be an integer")
-
-        # self._max_records_per_incremental_sync = max_records_per_incremental_sync
-
-        # # set numbers of records between state checkpointing
-        # # by default, no interval checkpointing is done
-        # state_checkpoint_interval = None
-        # if config.get("incremental_sync_mode") is not None:
-        #     state_checkpoint_interval = config["incremental_sync_mode"].get("state_checkpoint_interval") or 1000
-        #     if state_checkpoint_interval is not None:
-        #         if not isinstance(state_checkpoint_interval, int):
-        #             raise ValueError("state_checkpoint_interval must be an integer")
-
-        # self._state_checkpoint_interval = state_checkpoint_interval
-
-        # # set number of slices per incremental sync
-        # slices_count_per_incremental_sync = None
-        # if config.get("incremental_sync_mode") is not None:
-        #     slices_count_per_incremental_sync = config["incremental_sync_mode"].get("slices_count_per_incremental_sync")
-        #     if slices_count_per_incremental_sync is not None:
-        #         if not isinstance(slices_count_per_incremental_sync, int):
-        #             raise ValueError("slices_count_per_incremental_sync must be an integer")
-
-        # self._slices_count_per_incremental_sync = slices_count_per_incremental_sync
 
 
     @property
@@ -315,15 +293,14 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         Get the cursor field value of the latest record synchronized
         :return: dict {cursor_field: value}
         """
-        if isinstance(cursor_field, list):
-            cursor_field = cursor_field[0]
-
-        latest_state = latest_record[cursor_field]
+        if not isinstance(cursor_field, list):
+            raise ValueError(f"Unable to get updated state, cursor_field must be a list {type(cursor_field)}")
         
-        if current_stream_state and current_stream_state.get(cursor_field):
-            return {cursor_field: max(latest_state, current_stream_state[cursor_field])}
+        new_stream_state = {}
+        for x in cursor_field:
+            new_stream_state[x] = latest_record[x]
         
-        return {cursor_field: latest_state}
+        return new_stream_state
 
 
     def stream_slices(
@@ -349,39 +326,40 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         if not isinstance(cursor_field, List):
             raise ValueError("{} - {} - {} - {}".format(self.name, sync_mode, str(cursor_field), str(stream_state)))
 
-        cursor_field = cursor_field[0]
-        stream_state = stream_state or {}
 
         # Incremental sync slices are supported for numbers only
         # because we do not know how to generate slices for other types, we return [None] i.e. no slice
-        cursor_types = self.get_json_schema()["properties"][cursor_field]["type"]
+        for x in cursor_field:
+            cursor_types = self.get_json_schema()["properties"][x]["type"]
 
-        if "number" not in cursor_types and "integer" not in cursor_types:
-            raise ValueError("Type '{}' not supported for cursor_field '{}'".format(type(cursor_field), cursor_field))
+            if "number" not in cursor_types and "integer" not in cursor_types:
+                raise ValueError(f"Type '{type(x)}' not supported for cursor_field '{x}'")
 
+
+        stream_state = stream_state or {}
 
         # get stats on data to see if there are any records to sync, and to prepare slices generation
-        data_info = self._describe_slices(cursor_field=cursor_field, stream_state=stream_state)
+        data_stats = self._describe_slices(cursor_field=cursor_field, stream_state=stream_state)
 
-        records_count = data_info["records_count"]
-        cursor_min = data_info["cursor_min"]
-        cursor_max = data_info["cursor_max"]
-
-        # if no data has to by synced, we return no slice 
-        if records_count == 0:
-            slices = [{"from": stream_state.get(cursor_field), "to": stream_state.get(cursor_field)}]
+        # if no data has to by synced, we still return one slice with the stream state 
+        if data_stats["count"] == 0:
+            slices = [{"from": [], "to": []}]
+            for name in cursor_field:
+                slices[0]["from"].append(stream_state.get(name))
+                slices[0]["to"].append(stream_state.get(name))
         else:
-            slices = self._get_cursor_slices(cursor_field=cursor_field, records_count=records_count, cursor_min=cursor_min, cursor_max=cursor_max)
+            slices = self._get_cursor_slices(cursor_field=cursor_field, data_stats=data_stats)
 
             # if it is the initial sync (i.e. no cursor state), we decrease the cursor_min value by one, to be sure that
             # the cypher query include records with cursor_min  
-            if stream_state.get(cursor_field) is None:
-                slices[0]["from"] = slices[0]["from"] - 1
+            for i, name in enumerate(cursor_field):
+                if stream_state.get(name) is None:
+                    slices[0]["from"][i] = slices[0]["from"][i] - 1
 
         return slices
 
 
-    def _get_cursor_slices(self, cursor_field: List[str], records_count: int, cursor_min, cursor_max) -> Iterable[Optional[Mapping[str, Any]]]:
+    def _get_cursor_slices(self, cursor_field: List[str], data_stats: Mapping) -> Iterable[Optional[Mapping[str, Any]]]:
         """
         Generate cursor slices for incremental sync.
         
@@ -392,37 +370,46 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         :param stream_state:
         :return:
         """
+        cursor_min = data_stats["min"]
+        cursor_max = data_stats["max"]
+        records_count = data_stats["count"]
+
         # limit the numbers of records for this sync process if _max_records_per_incremental_sync has been set
-        # and _max_records_per_incremental_sync < records_count
+        # and _max_records_per_incremental_sync < data_stats["count"]
         if self._max_records_per_incremental_sync is not None and self._max_records_per_incremental_sync < records_count:
             percentile = round(self._max_records_per_incremental_sync / records_count, 3)
 
             cursor_values =  self._get_cursor_value_for_percentiles(
                 percentiles=[percentile],
                 cursor_field=cursor_field,
-                cursor_min=cursor_min,
-                cursor_max=cursor_max
+                cursor_min = cursor_min,
+                cursor_max = cursor_max
             )
 
             cursor_max = cursor_values[percentile]
-        
+            records_count = self._count_records_in_slice(cursor_field=cursor_field, cursor_min=cursor_min, cursor_max=cursor_max)
 
-        slices_count = self._slices_count_per_incremental_sync or 1
 
-        if slices_count == 1:
-            slice_start_values = []
-            slice_end_values = []
-        else:
-            # calculate percentiles to balance slices
-            percentiles = [x/self._slices_count_per_incremental_sync for x in range(1, self._slices_count_per_incremental_sync, 1)]
+        # by default, we have one big slice
+        slice_start_values = []
+        slice_end_values = []
 
+        if self._checkpointing_mode == "slices":
+            # calculate percentiles
+            if isinstance(self._max_records_per_slice, int):
+                percentiles = [x/records_count for x in range(self._max_records_per_slice, records_count, self._max_records_per_slice)]
+            
+            elif isinstance(self._slices_count_per_incremental_sync, int) and self._slices_count_per_incremental_sync > 1:
+                percentiles = [x/self._slices_count_per_incremental_sync for x in range(1, self._slices_count_per_incremental_sync, 1)]
+
+            percentiles = [round(percentile, 3) for percentile in percentiles]
+            # query database to get cursor values corresponding to the percentiles
             cursor_values =  self._get_cursor_value_for_percentiles(
                 percentiles=percentiles,
                 cursor_field=cursor_field,
-                cursor_min=cursor_min,
-                cursor_max=cursor_max
+                cursor_min = cursor_min,
+                cursor_max = cursor_max
             )
-
             slice_start_values = [cursor_values[percentile] for percentile in percentiles]
             slice_end_values = [cursor_values[percentile] for percentile in percentiles]
 
@@ -448,6 +435,8 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         """
         :return: cypher query for fetching entity
         """
+        stream_state = stream_state or {}
+
         query_where = ""
         query_order = ""
         params = None
@@ -455,34 +444,42 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         if sync_mode == SyncMode.incremental:
             # Add specific cursor_field WHERE and ORDER statements for incremental sync
             # See https://docs.airbyte.io/connector-development/cdk-python/incremental-stream
-            cursor_field = cursor_field[0]
-            query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
 
-            if self._checkpointing_mode == "interval":
-                # # if sync mode is incremental but no slices have been configured
-                # # we get cursor_values from and to for 1 slice
-                # stream_slice = self._get_cursor_slices(sync_mode=sync_mode, cursor_field=cursor_field, stream_state=stream_state)[0]
+            query_where = self._get_cursor_where_query(
+                cursor_field=cursor_field,
+                min_strict=True,
+                include_max_limit=True,
+                max_strict=False
+            )
+            query_where = f"WHERE {query_where}"
 
-                # interval based checkpointing needs records to be sorted by cursor_field ASC
-                query_order = "ORDER BY {} ASC".format(query_cursor)
+            params = self._get_cursor_params(
+                cursor_min=stream_slice["from"],
+                cursor_max=stream_slice["to"]
+            )
 
 
-            query_where = "WHERE {} > $from AND {} <= $to".format(query_cursor, query_cursor)
-            params = {"from": stream_slice["from"], "to": stream_slice["to"]}
+            # checkpointing needs records to be sorted by cursor_field ASC
+            query_order = []
+            for i, name in enumerate(cursor_field):
+                query_cursor = self._get_cypher_identifier_for_cursor(name)
+                query_order.append(query_cursor)
+            
+            query_order = ", ".join(query_order)
+            query_order = f"ORDER BY {query_order} ASC"
 
- 
+
         # Generate specific MATCH statements corresponding to node or relationship
         query_match = self._get_cypher_match_query()
 
         # Generate specific RETURN statements corresponding to node or relationship
         query_return = self._get_cypher_return_query()
 
-        query = "{} {} {} {}".format(
-            query_match,
-            query_where,
-            query_return,
-            query_order
-        )
+        query = f"""
+            {query_match}
+            {query_where}
+            {query_return}
+            {query_order}"""
 
         return {"query": query, "params": params}
 
@@ -508,54 +505,144 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         if isinstance(cursor_field, str):
             cursor_field = [cursor_field]
         
-        cursor_field = cursor_field[0]
-
         
         # get statistical information
         # number of rows, min and max of cursor_field
         info = {}
 
-        query_where = ""
-        params = None
-        query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
-        
-        if stream_state.get(cursor_field) is not None:
-            query_where = "WHERE {} >= $from".format(query_cursor)
-            params = {"from": stream_state.get(cursor_field)}
+        query_where = []
+        query_return = []
 
-        query = """
-            {}
-            {}
+        params = None
+        
+        for i, name in enumerate(cursor_field):
+            cursor_identifier = self._get_cypher_identifier_for_cursor(name)
+            query_return.append(f"[min({cursor_identifier}), max({cursor_identifier})]")
+            
+            if stream_state.get(name) is not None:
+                query_where.append(f"{cursor_identifier} >= $from{i}")
+                params = {f"from{i}": stream_state.get(name)}
+
+
+        query_match = self._get_cypher_match_query()
+        query_where = " AND ".join(query_where)
+        query_where = f"WHERE {query_where}" if query_where != "" else ""
+        query_return = ", ".join(query_return)
+        
+        query = f"""
+            {query_match}
+            {query_where}
             RETURN
-                count({}) AS count,
-                min({}) AS min,
-                max({}) AS max
-        """.format(
-                self._get_cypher_match_query(),
-                query_where,
-                query_cursor,
-                query_cursor,
-                query_cursor
-            )
+                count({cursor_identifier}) AS count,
+                {query_return}
+        """
         
         query = {"query": query, "params": params}
         res = next(self._client.fetch_results(query))
 
-        # if records_count equals 0 (i.e. stream_state higher than cursor max),
-        # cursor_min and cursor_max will be None, so we set them to the stream_state value
-        info["records_count"] = res[0]
-        info["cursor_min"] = res[1]
-        info["cursor_max"] = res[2]
+        stats = {
+            "count": res[0],
+            "min": [],
+            "max": []
+        }
+        for i, name in enumerate(cursor_field):
+            stats["min"].append(res[i+1][0])
+            stats["max"].append(res[i+1][1])
 
-        return info
+        return stats
+
+
+    def _count_records_in_slice(self, cursor_field: List[str], cursor_min: List[int], cursor_max: List[int] = None) -> Mapping[str, Any]:
+        """
+        Get information about the slices and the cursor field
+        :return: dict of information
+        """
+        if isinstance(cursor_field, str):
+            cursor_field = [cursor_field]
+        
+                
+        query_where = self._get_cursor_where_query(
+            cursor_field=cursor_field,
+            min_strict=False,
+            include_max_limit=True,
+            max_strict=False,
+            cursor_min=cursor_min,
+            cursor_max=cursor_max
+        )
+
+        params = self._get_cursor_params(cursor_min=cursor_min, cursor_max=cursor_max)
+
+        query_match = self._get_cypher_match_query()
+        main_cursor_identifier = self._get_cypher_identifier_for_cursor(cursor_field[0])
+        
+        query = f"""
+            {query_match}
+            WHERE {query_where}
+            RETURN
+                count({main_cursor_identifier}) AS count
+        """
+        
+        query = {"query": query, "params": params}
+        res = next(self._client.fetch_results(query))
+
+        count = res[0] if res[0] else 0
+
+        return count
+
+
+    def _get_cursor_params(self, cursor_min: List[int], cursor_max: List[int] = None) -> str:
+        """
+        Construct params dict to pass with the query statement
+        """
+        params = {}
+        
+        for i, value in enumerate(cursor_min):
+            params[f"cursor_min_{i}"] = value
+
+        if cursor_max is not None:
+            for i, value in enumerate(cursor_max):
+                params[f"cursor_max_{i}"] = value
+
+        return params
+
+
+    def _get_cursor_where_query(
+        self,
+        cursor_field: List[str],
+        min_strict: bool = False,
+        include_max_limit: bool = False,
+        max_strict: bool = False,
+        cursor_min: List[int] = None,
+        cursor_max: List[int] = None
+        ) -> str:
+        """
+        Construct where query for cursor
+        """
+        query = []
+        
+        for i, name in enumerate(cursor_field):
+            cursor_identifier = self._get_cypher_identifier_for_cursor(name)
+            
+            operator_min = ">" if min_strict else ">="
+            param_min = cursor_min[i] if isinstance(cursor_min, list) else f"$cursor_min_{i}"
+            query.append(f"{cursor_identifier} {operator_min} {param_min}")
+
+            if include_max_limit:
+                operator_max = "<" if max_strict else "<="
+                param_max = cursor_max[i] if isinstance(cursor_max, list) else f"$cursor_max_{i}"
+                query.append(f"{cursor_identifier} {operator_max} {param_max}")
+            
+        query = " AND ".join(query)
+        
+        return query
 
 
     def _get_cursor_value_for_percentiles(
         self,
         percentiles: List[int],
         cursor_field: List[str],
-        cursor_min: Any,
-        cursor_max: Any
+        cursor_min: List[int],
+        cursor_max: List[int]
     ) -> List[Mapping[int, Any]]:
         """
         Get cursor values matching percentiles
@@ -564,29 +651,46 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         if isinstance(cursor_field, str):
             cursor_field = [cursor_field]
         
-        cursor_field = cursor_field[0]
+        # construct where query for cursor
+        # The query is very low if we pass the cursor min/max values as parameters, so we generate the query with the values
+        query_where = self._get_cursor_where_query(
+            cursor_field=cursor_field,
+            min_strict=False,
+            include_max_limit=True,
+            max_strict=False,
+            cursor_min=cursor_min,
+            cursor_max=cursor_max
+        )
+        query_match = self._get_cypher_match_query()
+        
+        query_return_cursor_values = []
+        for i, name in enumerate(cursor_field):
+            cursor_identifier = self._get_cypher_identifier_for_cursor(name)
+            query_return_cursor_values.append(f"percentileDisc({cursor_identifier}, _) as cursor_value_{i}")
 
-        query_cursor = self._get_cypher_identifier_for_cursor(cursor_field)
+        query_return_cursor_values = ", ".join(query_return_cursor_values)
 
         # get cursor field value corresponding to the percentiles
-        query = """
+        query = f"""
             WITH $percentiles as percentiles
             CALL apoc.cypher.mapParallel2("
-            {}
-            WHERE {} >= {} AND {} <= {}
-            RETURN percentileDisc({}, _) as cursor_value, _ as percentile",
+            {query_match}
+            WHERE {query_where}
+            RETURN _ as percentile, {query_return_cursor_values}",
             {{}}, percentiles, size(percentiles), 60) YIELD value
-            RETURN value.percentile as percentile, value.cursor_value as cursor_value
-            """.format(
-                    self._get_cypher_match_query(),
-                    query_cursor, cursor_min, query_cursor, cursor_max,
-                    query_cursor
-                )
+            RETURN value
+            ORDER BY value.percentile ASC
+            """
         params = {"percentiles": percentiles}
+
         query = {"query": query, "params": params}
         res = self._client.fetch_results(query)
 
-        cursor_values = {record["percentile"]:record["cursor_value"] for record in res}
+        cursor_values =  {}
+        for record in res:
+            cursor_values[record["value"]["percentile"]] = []
+            for i, name in enumerate(cursor_field):
+                cursor_values[record["value"]["percentile"]].append(record["value"][f"cursor_value_{i}"])
         
         return cursor_values
 
@@ -638,7 +742,7 @@ class NodeStream(IncrementalNeo4jStream):
         # add identity and labels not considered as properties
         dict_record = {
             "_identity": record[key].id,
-            "_labels": list(record[key].labels)
+            "_labels": sorted(list(record[key].labels))
         }
 
         dict_record = {**dict_record, **dict(record[key].items())}
