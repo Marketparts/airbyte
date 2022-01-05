@@ -685,12 +685,13 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         query_return_cursor_values = ", ".join(query_return_cursor_values)
 
         # get cursor field value corresponding to the percentiles
+        # TODO: set 30 min timeout from an environment variable
         query = f"""
             WITH $percentiles as percentiles
             CALL apoc.cypher.mapParallel2("
             {query_match_where}
             RETURN _ as percentile, {query_return_cursor_values}",
-            {{}}, percentiles, size(percentiles), 60) YIELD value
+            {{}}, percentiles, size(percentiles), 1800) YIELD value
             RETURN value
             ORDER BY value.percentile ASC
             """
