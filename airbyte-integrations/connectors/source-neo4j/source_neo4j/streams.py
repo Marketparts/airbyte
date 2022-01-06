@@ -377,7 +377,7 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
 
         # limit the numbers of records for this sync process if _max_records_per_incremental_sync has been set
         # and _max_records_per_incremental_sync < data_stats["count"]
-        if self._max_records_per_incremental_sync is not None and self._max_records_per_incremental_sync < records_count:
+        if isinstance(self._max_records_per_incremental_sync, int) and self._max_records_per_incremental_sync < records_count:
             percentile = round(self._max_records_per_incremental_sync / records_count, 3)
 
             cursor_values =  self._get_cursor_value_for_percentiles(
@@ -397,22 +397,24 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
 
         if self._checkpointing_mode == "slices":
             # calculate percentiles
-            if isinstance(self._max_records_per_slice, int):
+            percentiles = []
+            if isinstance(self._max_records_per_slice, int) and self._max_records_per_slice < records_count:
                 percentiles = [x/records_count for x in range(self._max_records_per_slice, records_count, self._max_records_per_slice)]
             
             elif isinstance(self._slices_count_per_incremental_sync, int) and self._slices_count_per_incremental_sync > 1:
                 percentiles = [x/self._slices_count_per_incremental_sync for x in range(1, self._slices_count_per_incremental_sync, 1)]
 
-            percentiles = [round(percentile, 3) for percentile in percentiles]
             # query database to get cursor values corresponding to the percentiles
-            cursor_values =  self._get_cursor_value_for_percentiles(
-                percentiles=percentiles,
-                cursor_field=cursor_field,
-                cursor_min = cursor_min,
-                cursor_max = cursor_max
-            )
-            slice_start_values = [cursor_values[percentile] for percentile in percentiles]
-            slice_end_values = [cursor_values[percentile] for percentile in percentiles]
+            if len(percentiles) > 0:
+                percentiles = [round(percentile, 3) for percentile in percentiles]
+                cursor_values =  self._get_cursor_value_for_percentiles(
+                    percentiles=percentiles,
+                    cursor_field=cursor_field,
+                    cursor_min = cursor_min,
+                    cursor_max = cursor_max
+                )
+                slice_start_values = [cursor_values[percentile] for percentile in percentiles]
+                slice_end_values = [cursor_values[percentile] for percentile in percentiles]
 
 
         slice_start_values.insert(0, cursor_min)

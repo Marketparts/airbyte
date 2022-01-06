@@ -121,6 +121,14 @@ def test_read_records_incremental_cypher_composite_cursor_interval_max_records_p
     assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename)
 
 
+def test_read_records_incremental_cypher_composite_cursor_slices_max_records_per_slice_greater_than_total(assert_read_records_are_expected):
+    config_filename = "config_cypher_composite_cursor_slices_max_records_per_slice_greater_than_total.json"
+    catalog_filename = "configured_catalog_incremental_cypher_composite_cursor.json"
+    expected_results_filename = "expected_messages_cypher_composite_cursor_incremental_slices_max_records_per_slice_greater_than_total.txt"
+    
+    assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename)
+
+
 def test_read_records_incremental_cypher_composite_cursor_slices_max_records_per_slice_and_sync(assert_read_records_are_expected):
     config_filename = "config_cypher_composite_cursor_slices_max_records_per_slice_and_sync.json"
     catalog_filename = "configured_catalog_incremental_cypher_composite_cursor.json"
