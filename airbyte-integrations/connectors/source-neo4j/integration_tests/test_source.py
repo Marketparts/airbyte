@@ -32,20 +32,21 @@ from source_neo4j.source import SourceNeo4j
 
 @pytest.fixture
 def assert_read_records_are_expected():
-    def assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename):
+    def assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename, state_filename=None):
         integration_tests_dirpath = os.path.dirname(os.path.realpath(__file__))
         config_filepath = os.path.sep.join([integration_tests_dirpath, "config", config_filename])
         catalog_filepath = os.path.sep.join([integration_tests_dirpath, "configured_catalog", catalog_filename])
         expected_results_filepath = os.path.sep.join([integration_tests_dirpath, "expected_results", expected_results_filename])
-        
+        state_filepath = os.path.sep.join([integration_tests_dirpath, "state", state_filename]) if state_filename is not None else None
 
         source = SourceNeo4j()
         
         config = source.read_config(config_filepath)
         configured_catalog = source.read_catalog(catalog_filepath)
+        state = source.read_state(state_filepath) if state_filepath is not None else None
         logger = source.logger
 
-        actual_messages = source.read(logger=logger, config=config, catalog=configured_catalog)
+        actual_messages = source.read(logger=logger, config=config, catalog=configured_catalog, state=state)
 
         with open(expected_results_filepath) as file:
             expected_messages = file.read().splitlines()
@@ -104,6 +105,20 @@ def test_read_records_full_refresh_cypher(assert_read_records_are_expected):
     assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename)
 
 
+def test_read_records_incremental_node_simple_cursor_interval(assert_read_records_are_expected):
+    config_filename = "config_all_simple_cursor_interval.json"
+    catalog_filename = "configured_catalog_incremental_node_simple_cursor.json"
+    
+    # test with no state
+    expected_results_filename = "expected_messages_node_simple_cursor_incremental_interval.txt"
+    assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename)
+
+    # test with state
+    state_filename = "state_simple_cursor_node_1.json"
+    expected_results_filename = "expected_messages_node_simple_cursor_incremental_interval_with_state.txt"
+    assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename, state_filename)
+
+
 def test_read_records_incremental_cypher_composite_cursor_interval(assert_read_records_are_expected):
     config_filename = "config_cypher_composite_cursor_interval.json"
     catalog_filename = "configured_catalog_incremental_cypher_composite_cursor.json"
@@ -124,9 +139,15 @@ def test_read_records_incremental_cypher_composite_cursor_interval_max_records_p
 def test_read_records_incremental_cypher_composite_cursor_slices_max_records_per_slice_greater_than_total(assert_read_records_are_expected):
     config_filename = "config_cypher_composite_cursor_slices_max_records_per_slice_greater_than_total.json"
     catalog_filename = "configured_catalog_incremental_cypher_composite_cursor.json"
+
+    # test with no state
     expected_results_filename = "expected_messages_cypher_composite_cursor_incremental_slices_max_records_per_slice_greater_than_total.txt"
-    
     assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename)
+
+    # test with state
+    state_filename = "state_composite_cursor.json"
+    expected_results_filename = "expected_messages_cypher_composite_cursor_incremental_slices_max_records_per_slice_greater_than_total_with_state.txt"
+    assert_read_records_are_expected(config_filename, catalog_filename, expected_results_filename, state_filename)
 
 
 def test_read_records_incremental_cypher_composite_cursor_slices_max_records_per_slice_and_sync(assert_read_records_are_expected):

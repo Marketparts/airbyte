@@ -394,7 +394,7 @@ class Neo4jClient:
 
 
         # remove all trailing characters
-        query = self._clean_cypher_query(query)
+        query = self.clean_cypher_query(query)
 
         if query == "":
             raise ValueError("cypher query is empty")
@@ -492,7 +492,7 @@ class Neo4jClient:
         return json_schema_types
 
     @staticmethod
-    def _clean_cypher_query(query: str):
+    def clean_cypher_query(query: str):
         """
         Remove all unwanted characters (extra spaces and line feed)
         """

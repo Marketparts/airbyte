@@ -41,17 +41,17 @@ def stream_config():
     return config
 
 
-def test_describe_slices(neo4j_container, stream_config):
+def test_describe_remaining_data_not_synced(neo4j_container, stream_config):
     client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
     stream = NodeStream(label="node_1", client=client, config=stream_config)
 
     expected = {
        "count": 100,
-        "min": [1633103553000],
-        "max": [1633107810000]
+        "cursor_min": [1633103552999],
+        "cursor_max": [1633107810000]
     }
 
-    assert stream._describe_slices(cursor_field=["updated_at"]) == expected
+    assert stream._describe_remaining_data_not_synced(cursor_field=["updated_at"]) == expected
 
     # test relationship stream
     stream = RelationshipStream(type="rel_1", client=client, config=stream_config)
@@ -61,12 +61,26 @@ def test_describe_slices(neo4j_container, stream_config):
         "count": 50
     }
 
-    assert stream._describe_slices(cursor_field="_identity")["count"] == expected["count"]
+    assert stream._describe_remaining_data_not_synced(cursor_field="_identity")["count"] == expected["count"]
 
-    assert isinstance(stream._describe_slices(cursor_field="_identity")["min"], list)
-    assert all(isinstance(x, int) for x in stream._describe_slices(cursor_field="_identity")["min"])
-    assert isinstance(stream._describe_slices(cursor_field="_identity")["max"], list)
-    assert all(isinstance(x, int) for x in stream._describe_slices(cursor_field="_identity")["max"])
+    assert isinstance(stream._describe_remaining_data_not_synced(cursor_field="_identity")["cursor_min"], list)
+    assert all(isinstance(x, int) for x in stream._describe_remaining_data_not_synced(cursor_field="_identity")["cursor_min"])
+    assert isinstance(stream._describe_remaining_data_not_synced(cursor_field="_identity")["cursor_max"], list)
+    assert all(isinstance(x, int) for x in stream._describe_remaining_data_not_synced(cursor_field="_identity")["cursor_max"])
+
+
+def test_describe_remaining_data_not_synced_with_stream_state(neo4j_container, stream_config):
+    client = Neo4jClient(config=pytest.neo4j_client_config, clear_cache=True)
+    stream = NodeStream(label="node_1", client=client, config=stream_config)
+
+    stream_state = {"updated_at": 1633105273000}
+    expected = {
+       "count": 59,
+        "cursor_min": [1633105273000],
+        "cursor_max": [1633107810000]
+    }
+
+    assert stream._describe_remaining_data_not_synced(cursor_field=["updated_at"], stream_state=stream_state) == expected
 
 
 
@@ -83,7 +97,7 @@ def test_get_cursor_value_for_percentiles(neo4j_container, stream_config):
     assert stream._get_cursor_value_for_percentiles(
         percentiles=[0.1,0.2],
         cursor_field=["updated_at"],
-        cursor_min=[1633103553000],
+        cursor_min=[1633103552999],
         cursor_max=[1633107810000]
     ) == expected
 

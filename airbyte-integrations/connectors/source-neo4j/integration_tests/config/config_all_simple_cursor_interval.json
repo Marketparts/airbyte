@@ -1,0 +1,13 @@
+{
+  "scheme": "bolt",
+  "host": "0.0.0.0",
+  "port": 7688,
+  "database": "",
+  "username": "neo4j",
+  "password": "test",
+  "enable_dynamic_schemas": true,
+  "custom_streams": "{\"custom1\": {\"match_query\": \"MATCH (A:node_2)-[:rel_1]->(B:node_1)\", \"return_query\": \"RETURN A, B.primary_key as b_prim\", \"cursor_field\": \"A.updated_at\"}}",
+  "json_schemas": "{\"custom1\": {\"A.updated_at\":{\"type\":\"integer\"}}}",
+  "incremental_sync_settings": "{\"DEFAULT\": {\"checkpointing_mode\": \"interval\", \"state_checkpoint_interval\": 9}}",
+  "replication_method": "STANDARD"
+}

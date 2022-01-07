@@ -22,7 +22,7 @@ tests:
         extra_records: no
   incremental:
     - config_path: "integration_tests/config/config_valid.json"
-      configured_catalog_path: "integration_tests/configured_catalog/configured_catalog_incremental.json"
+      configured_catalog_path: "integration_tests/configured_catalog/configured_catalog_incremental_node_simple_cursor.json"
       future_state_path: "integration_tests/abnormal_state.json"
   full_refresh:
     - config_path: "integration_tests/config/config_valid.json"

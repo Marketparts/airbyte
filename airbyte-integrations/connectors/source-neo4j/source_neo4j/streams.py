@@ -166,6 +166,7 @@ class Neo4jStream(Stream, ABC):
         """
         This method should be overridden by subclasses to read records based on the inputs
         """
+
         query = self._get_cypher_query(
             sync_mode=sync_mode,
             cursor_field=cursor_field,
@@ -173,6 +174,14 @@ class Neo4jStream(Stream, ABC):
             stream_state=stream_state
         )
 
+        # log cypher query
+        log_query = self._client.clean_cypher_query(query["query"])
+        log_query = self._client.clean_cypher_query(log_query)
+        log_params = query["params"]
+        log_message = f"Reading records from database. Executing cypher {log_query} with params {log_params}"
+        self.logger.info(log_message)
+
+        # execute cypher query
         return self._client.fetch_results(query, self._record_to_dict)
 
 
@@ -315,6 +324,19 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         :param stream_state:
         :return: list of dict {"from": value, "to": value}
         """
+        # we log the stream config used to generate the slices
+        log_message = {
+            "cursor_field": self.cursor_field,
+            "incremental_sync_settings": {
+                "checkpointing_mode": self._checkpointing_mode,
+                "state_checkpoint_interval": self._state_checkpoint_interval,
+                "max_records_per_incremental_sync": self._max_records_per_incremental_sync,
+                "max_records_per_slice": self._max_records_per_slice,
+                "slices_count_per_incremental_sync": self._slices_count_per_incremental_sync
+            }
+        }
+        self.logger.info(f"Stream '{self.name}' configured with the following parameters: {log_message}")
+
         # if user has configured a full refresh
         # we return one empty slice
         if  sync_mode == SyncMode.full_refresh:
@@ -340,7 +362,8 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         stream_state = stream_state or {}
 
         # get stats on data to see if there are any records to sync, and to prepare slices generation
-        data_stats = self._describe_slices(cursor_field=cursor_field, stream_state=stream_state)
+        data_stats = self._describe_remaining_data_not_synced(cursor_field=cursor_field, stream_state=stream_state)
+        self.logger.info(f"Remaining records not synced: {str(data_stats)}")
 
         # if no data has to by synced, we still return one slice with the stream state 
         if data_stats["count"] == 0:
@@ -351,11 +374,7 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         else:
             slices = self._get_cursor_slices(cursor_field=cursor_field, data_stats=data_stats)
 
-            # if it is the initial sync (i.e. no cursor state), we decrease the cursor_min value by one, to be sure that
-            # the cypher query include records with cursor_min  
-            for i, name in enumerate(cursor_field):
-                if stream_state.get(name) is None:
-                    slices[0]["from"][i] = slices[0]["from"][i] - 1
+        self.logger.info(f"Incremental sync will be processed in {len(slices)} slices")
 
         return slices
 
@@ -371,8 +390,8 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         :param stream_state:
         :return:
         """
-        cursor_min = data_stats["min"]
-        cursor_max = data_stats["max"]
+        cursor_min = data_stats["cursor_min"]
+        cursor_max = data_stats["cursor_max"]
         records_count = data_stats["count"]
 
         # limit the numbers of records for this sync process if _max_records_per_incremental_sync has been set
@@ -502,7 +521,7 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         return query_cursor
 
 
-    def _describe_slices(self, cursor_field: List[str], stream_state: Mapping[str, Any] = None) -> Mapping[str, Any]:
+    def _describe_remaining_data_not_synced(self, cursor_field: List[str], stream_state: Mapping[str, Any] = None) -> Mapping[str, Any]:
         """
         Get information about the slices and the cursor field
         :return: dict of information
@@ -514,22 +533,29 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         
         # get statistical information
         # number of rows, min and max of cursor_field
-        info = {}
-
-        query_where = []
+        query_where = ""
         query_return = []
-
+        cursor_min = []
         params = None
-        
-        for i, name in enumerate(cursor_field):
-            cursor_identifier = self._get_cypher_identifier_for_cursor(name)
-            query_return.append(f"[min({cursor_identifier}), max({cursor_identifier})]")
-            
-            if stream_state.get(name) is not None:
-                query_where.append(f"{cursor_identifier} >= $from{i}")
-                params = {f"from{i}": stream_state.get(name)}
 
-        query_where = " AND ".join(query_where)
+        for name in cursor_field:
+            cursor_identifier = self._get_cypher_identifier_for_cursor(name)
+            if len(stream_state.keys()) > 0:
+                cursor_min.append(stream_state.get(name))
+                cursor_min_query_return = stream_state.get(name)
+            else:
+                cursor_min_query_return = f"min({cursor_identifier}) - 1"
+            
+            query_return.append(f"[{cursor_min_query_return}, max({cursor_identifier})]")
+
+        if len(stream_state.keys()) > 0:
+            query_where = self._get_cursor_where_query(
+                cursor_field=cursor_field,
+                min_strict=True,
+                include_max_limit=False
+            )
+            params = self._get_cursor_params(cursor_min=cursor_min)
+
 
         query_match = self._get_cypher_match_query()
         query_match_where = self._merge_match_and_cursor_where_queries(
@@ -551,12 +577,12 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
 
         stats = {
             "count": res[0],
-            "min": [],
-            "max": []
+            "cursor_min": [],
+            "cursor_max": []
         }
         for i, name in enumerate(cursor_field):
-            stats["min"].append(res[i+1][0])
-            stats["max"].append(res[i+1][1])
+            stats["cursor_min"].append(res[i+1][0])
+            stats["cursor_max"].append(res[i+1][1])
 
         return stats
 
@@ -572,11 +598,9 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
                 
         query_where = self._get_cursor_where_query(
             cursor_field=cursor_field,
-            min_strict=False,
+            min_strict=True,
             include_max_limit=True,
-            max_strict=False,
-            cursor_min=cursor_min,
-            cursor_max=cursor_max
+            max_strict=False
         )
 
         params = self._get_cursor_params(cursor_min=cursor_min, cursor_max=cursor_max)
@@ -664,15 +688,19 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
             cursor_field = [cursor_field]
         
         # construct where query for cursor
-        # The query is very low if we pass the cursor min/max values as parameters, so we generate the query with the values
         cursor_where_query = self._get_cursor_where_query(
             cursor_field=cursor_field,
-            min_strict=False,
+            min_strict=True,
             include_max_limit=True,
-            max_strict=False,
-            cursor_min=cursor_min,
-            cursor_max=cursor_max
+            max_strict=False
         )
+
+        cursor_params = self._get_cursor_params(cursor_min=cursor_min, cursor_max=cursor_max)
+        params = {**{"percentiles": percentiles}, **cursor_params}
+        
+        query_cursor_params = [f"{key}: ${key}" for key in cursor_params.keys()]
+        query_cursor_params = ", ".join(query_cursor_params)
+
         query_match = self._get_cypher_match_query()
         query_match_where = self._merge_match_and_cursor_where_queries(
             match_query=query_match,
@@ -689,15 +717,13 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         # get cursor field value corresponding to the percentiles
         # TODO: set 30 min timeout from an environment variable
         query = f"""
-            WITH $percentiles as percentiles
             CALL apoc.cypher.mapParallel2("
             {query_match_where}
             RETURN _ as percentile, {query_return_cursor_values}",
-            {{}}, percentiles, size(percentiles), 1800) YIELD value
+            {{{query_cursor_params}}}, $percentiles, size($percentiles), 1800) YIELD value
             RETURN value
             ORDER BY value.percentile ASC
             """
-        params = {"percentiles": percentiles}
 
         query = {"query": query, "params": params}
         res = self._client.fetch_results(query)
@@ -715,6 +741,13 @@ class IncrementalNeo4jStream(Neo4jStream, ABC):
         """
         Merge cursor where query with where clause in match query if existing
         """
+        if not isinstance(match_query, str):
+            raise ValueError(f"match_query must be a string, {type(match_query)} given.")
+        if match_query == "":
+            raise ValueError(f"match_query is empty.")
+        if not isinstance(cursor_where_query, str):
+            raise ValueError(f"cursor_where_query must be a string, {type(cursor_where_query)} given.")
+
         merge_query = match_query
 
         if cursor_where_query != "":
