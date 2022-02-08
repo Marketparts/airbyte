@@ -140,7 +140,7 @@ def test_describe_remaining_data_not_synced(mock_incremental_base_class, mocker,
     mocker.patch.object(Neo4jClient, "fetch_results", return_value=iter([[4, [1234, 5678]]]))
     config = {"scheme": "bolt", "host": "google.com", "port": 80, "username": "myusername", "password": "mypassword"}
     client = Neo4jClient(config=config)
-    stream = IncrementalNeo4jStream(client=client, config=stream_config)
+    stream = NodeStream(label="test", client=client, config=stream_config)
 
     expected = {
         "count": 4,

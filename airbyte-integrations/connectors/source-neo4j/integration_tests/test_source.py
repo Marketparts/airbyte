@@ -61,6 +61,12 @@ def assert_read_records_are_expected():
                 if mess_json["record"].get("emitted_at") is not None:
                     del mess_json["record"]["emitted_at"]
                 
+                # remove "_identity" attribute for comparison because it is managed internally by Neo4j
+                # and can change between version, or if recycled
+                if mess_json["record"].get("data") is not None:
+                    if mess_json["record"]["data"].get("_identity") is not None:
+                        del mess_json["record"]["data"]["_identity"]
+
             actual_messages_json.append(mess_json)
         
 
@@ -72,7 +78,15 @@ def assert_read_records_are_expected():
             if expected_mess.get("record") is not None:
                 if expected_mess["record"].get("emitted_at") is not None:
                     del expected_mess["record"]["emitted_at"]
-            
+
+            # remove "_identity" attribute for comparison because it is managed internally by Neo4j
+            # and can change between version, or if recycled
+            if expected_mess.get("record") is not None:
+                if expected_mess["record"].get("data") is not None:
+                    if expected_mess["record"]["data"].get("_identity") is not None:
+                        del expected_mess["record"]["data"]["_identity"]
+
+
             expected_messages_json.append(expected_mess)
 
         for i, message in enumerate(actual_messages_json):
