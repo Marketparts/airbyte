@@ -101,6 +101,7 @@ For more information about the grading system, see [Product Release Stages](http
 | [Notion](sources/notion.md)                                                                 | Alpha                | No                  |
 | [Okta](sources/okta.md)                                                                     | Alpha                | Yes                 |
 | [OneSignal](sources/onesignal.md)                                                           | Alpha                | No                  |
+| [Open Exchange Rates](sources/open-echange-rates.md)                                        | Alpha                | No                  |
 | [OpenWeather](sources/openweather.md)                                                       | Alpha                | No                  |
 | [Oracle DB](sources/oracle.md)                                                              | Alpha                | Yes                 |
 | [Oracle PeopleSoft](sources/oracle-peoplesoft.md)                                           | Alpha                | No                  |
